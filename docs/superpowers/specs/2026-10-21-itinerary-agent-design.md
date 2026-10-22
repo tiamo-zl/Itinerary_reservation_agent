@@ -35,7 +35,7 @@
 - LangGraph 任务状态机与 Checkpoint 断点恢复；
 - 工具注册、风险分级、写操作幂等与准入；
 - 统一模型网关（聊天与 embedding）；
-- 企业制度 RAG 与三层记忆；
+- 制度结构化检索（条款树、引用图、表格）与三层记忆；
 - 规则化差标校验与审批闸门；
 - TraceID 贯穿七层与纵向链路回放；
 - 端到端测试与可重复的演示场景。
@@ -55,10 +55,11 @@
 2. **依赖单向**：外层依赖内层接口，内层不反向依赖外层；具体实现只在组合根装配。
 3. **两个唯一出口**：所有大模型/embedding 调用只经过模型网关；所有外部业务系统只经过工具层。
 4. **状态最小化**：图状态只保存摘要、决策与引用 ID；制度原文、聊天全文、完整库存数据不进入状态。
-5. **控制确定性**：差标、审批、下单准入由代码判定，模型只负责理解与规划。
+5. **控制确定性**：差标、审批、下单准入由代码判定；差标规则由制度表格编译、审核后启用，模型只负责理解与规划。
 6. **一切可模拟**：外部依赖都有 mock 实现，测试默认不访问真实网络。
 7. **全链路可观测**：trace_id 从网关进入，贯穿图节点、工具、知识、模型、控制。
 8. **中间件由使用者安装**：项目只声明依赖与配置，不自动下载安装成熟组件。
+9. **制度不是普通文档**：条款层级、引用/例外关系、表格和版本必须结构化；判定靠规则，解释靠检索。
 
 ## 4. 总体架构
 
@@ -73,7 +74,7 @@ Browser / CLI
 │    trace_id · 鉴权 · 校验 · PII · 限流 · SSE 封装            │
 │                         │                                    │
 │                         ▼                                    │
-│  orchestration/（L2）LangGraph 图 + SQLite Checkpoint        │
+│  orchestration/（L2）LangGraph 图 + SQLite（Checkpoint/制度关系/记忆/Trace）│
 │     │         │            │            │                    │
 │     ▼         ▼            ▼            ▼                    │
 │  tools/    knowledge/  model_gateway/  control/              │
@@ -97,7 +98,7 @@ src/itinerary_agent/
 ├── api/               # L1 接入网关：路由、中间件、SSE、错误封装
 ├── orchestration/     # L2 编排：graph、state、nodes、subgraphs、checkpoint、service
 ├── tools/             # L3 工具：注册表、契约、风险分级、内置工具、MCP 适配
-├── knowledge/         # L4 知识记忆：制度 RAG、短期/长期记忆
+├── knowledge/         # L4 制度解析、条款图、混合检索、规则编译、记忆
 ├── model_gateway/     # L5 模型网关：聊天与 embedding、分档路由、重试、成本统计
 ├── control/           # L6 控制：差标求值、动作准入、审批闸门、审计
 ├── observability/     # L7 可观测：span 工具、层标记、exporter、回放查询
@@ -128,7 +129,7 @@ infra → 所有具体实现
 - `api` 只依赖 `Orchestrator` 接口，不知道 LangGraph 的存在；
 - `orchestration` 依赖工具/知识/模型/控制的接口，不 import 具体实现或 mock；
 - 任何节点不得直接调用模型 SDK 或外部业务接口；
-- 知识层返回摘要与引用 ID，不返回整篇文档；
+- 知识层返回结构化 context pack（条款/表格/引用）与引用 ID，不返回整篇文档；
 - 知识层只依赖 `EmbeddingPort`，不直接依赖模型网关；由 `infra` 完成绑定；
 - 控制层不做业务查询，只依据输入与规则判断；
 - `infra` 负责装配，是唯一允许出现具体类名的位置。
@@ -155,9 +156,41 @@ class ModelGateway(Protocol):
 class EmbeddingPort(Protocol):
     async def embed(self, ctx: CallContext, texts: list[str]) -> list[list[float]]: ...
 
+class PolicyFilters(BaseModel):
+    city_tier: int | None = None
+    employee_level: str | None = None
+    effective_date: str | None = None
+
+class PolicyClause(BaseModel):
+    clause_id: str
+    path: str
+    title: str
+    text: str
+    clause_type: str
+    policy_version: str
+    table_id: str | None = None
+    refs: list[str] = Field(default_factory=list)
+
+class PolicyTable(BaseModel):
+    table_id: str
+    source_clause_id: str
+    columns: list[str]
+    rows: list[dict]
+
+class PolicyContext(BaseModel):
+    clauses: list[PolicyClause]
+    tables: list[PolicyTable]
+    citations: list[str]
+    policy_version: str
+    degraded: bool = False
+    insufficient: bool = False
+    trace: dict = Field(default_factory=dict)
+
 class KnowledgeService(Protocol):
-    async def search_policy(self, ctx: RequestContext, query: str, top_k: int = 5) -> list[PolicySnippet]: ...
-    async def get_document(self, ctx: RequestContext, doc_id: str) -> DocumentRef: ...
+    async def search_policy(self, ctx: RequestContext, query: str,
+                            filters: PolicyFilters | None = None) -> PolicyContext: ...
+    async def get_clause(self, ctx: RequestContext, clause_id: str) -> PolicyClause: ...
+    async def get_table(self, ctx: RequestContext, table_id: str) -> PolicyTable: ...
     async def get_memories(self, ctx: RequestContext, kinds: list[str]) -> list[UserMemory]: ...
     async def upsert_memory(self, ctx: RequestContext, memory: UserMemory) -> None: ...
 
@@ -310,8 +343,9 @@ class TravelTaskState(TypedDict):
   → [L1] 鉴权、trace_id、PII 过滤、校验
   → [L2] understand（light 模型）→ TripRequest
   → [L2] plan（reasoning 模型）→ SubTask[]
+  → 需要制度依据时：[L4] knowledge.search_policy → context pack（条款/表格/引用）
   → [L3] search_flights / search_hotels（并行）
-  → [L6] check_policy
+  → [L6] check_policy（使用编译后的差标规则，不依赖 RAG）
   → 通过：confirm（interrupt）→ book → finalize
   → 需审批：submit_approval → WAITING_APPROVAL → approved → confirm → book
   → 驳回：WAITING_HUMAN → 用户修改 → revision++ → plan
@@ -389,9 +423,10 @@ class Violation(BaseModel):
     message: str
     limit: float | None
     actual: float | None
+    source_clause_id: str | None = None
 ```
 
-模型可调用只读的规则解释能力来向用户说明"为什么超标"，但不能改变判定。
+模型可调用只读的规则解释能力来向用户说明"为什么超标"，但不能改变判定。`source_clause_id` 用于把规则判定关联回制度条款，回答时给出依据。
 
 ### 6.5 错误与重试
 
@@ -440,6 +475,9 @@ class CallContext(BaseModel):
 - base_url：默认 `https://dashscope.aliyuncs.com/compatible-mode/v1`，可改为业务空间专属地址；
 - 单批最多 20 条输入，网关负责分批；
 - 只使用 dense 向量；稀疏向量需要原生 DashScope API，本项目不使用；
+- 按“条款”而不是章节做 embedding：文本 = 文档路径 + 标题 + 正文；
+- 表格行单独结构化存储，检索时按 `table_id` 取回并过滤，不把表格切碎；
+- 检索采用关键词（FTS5）+ 向量混合召回，再做引用图扩展；
 - 模型分区域上架，默认使用北京地域。
 
 ### 7.4 横切能力
@@ -457,70 +495,156 @@ class CallContext(BaseModel):
 
 ## 8. 知识与记忆
 
-### 8.1 制度 RAG 入库
+制度不是普通文档：条款有层级、跨引用、例外、表格和版本，差标判定又必须确定。因此知识层分成两条路径：
+
+- **制度解释/问答**：结构化条款树 + 混合检索 + 引用图扩展，返回带引用的 context pack；
+- **差标判定**：从制度表格编译成结构化规则，由控制层确定性执行。
+
+RAG 不承担合规判定，规则不负责自然语言解释；两者通过 `source_clause_id` 关联。
+
+### 8.1 制度结构化模型
+
+```text
+PolicyDocument
+└── Chapter（章）
+    └── Article（条）
+        └── Clause（款/项）
+            ├── parent_id
+            ├── path                 # travel-policy/ch3/art12/cl2
+            ├── refs[]               # 引用条款/附表 ID
+            ├── exceptions[]         # 例外条款 ID
+            ├── definitions[]        # 适用定义 ID
+            ├── table_id             # 该条包含的表格
+            └── effective_from/to
+```
+
+表格单独建模（`PolicyTable`，定义见 4.4），不做文本切分；每一行保留列名与来源条款。
+
+引用关系单独存边：
+
+| 关系 | 含义 |
+|---|---|
+| `references` | 条款引用另一条款或附表 |
+| `exception_to` | 例外条款作用于主条款 |
+| `defines` | 定义条款解释术语 |
+| `amends` | 修订条款修改目标条款 |
+| `supersedes` | 新版本替代旧版本 |
+
+### 8.2 入库管线
 
 ```text
 企业制度 PDF
-  → PyMuPDF 解析 → 清洗（页眉页脚、表格）
-  → 按章节切分（约 400 tokens，50 overlap，保留表格）
-  → 计算 chunk_hash → 查 embedding 缓存
-  → 批量 embedding（≤20 条/批）
-  → 写入 Milvus
+  → 文档解析（优先 Docling，demo 可用 PyMuPDF）
+  → 结构抽取：标题、条款编号、表格、附录
+  → 条款树 + 表格 + 引用/例外/定义关系
+  → 引用解析与校验 → 低置信度进入人工校对队列
+  → 条款级 embedding（文本 = 路径 + 标题 + 正文）
+  → 写入 Milvus（向量）与 SQLite（结构/关系/表格/FTS5）
+  → 规则编译（差标表格 → 规则，需人工审核后启用）
 ```
 
-Chunk metadata：
+约束：
 
-```python
-{
-  "tenant_id": "demo-company",
-  "policy_version": "2026.1",
-  "doc_id": "travel-policy",
-  "section": "住宿标准",
-  "page": 3,
-  "effective_from": "2026-01-01",
-  "effective_to": None,
-}
-```
+- **不 drop、不覆盖已有数据**；新制度版本以新 `policy_version` 写入；
+- 每个条款必须能追溯到文档、页码和版本；
+- 跨引用解析失败的条款不进入可用状态，进入 `policy_ingest_reviews`；
+- 表格必须保留表头与行语义，合并单元格在解析时展开；
+- 规则编译结果必须校验来源条款与表格行，审核通过后才生效。
 
-### 8.2 Milvus Collection
+### 8.3 存储
 
-- 连接：`http://127.0.0.1:19530`，无 token（本地）；
-- collection：`itinerary_policy_chunks_v1`，启动时先用 `has_collection()` 判断，不存在再创建；
-- **不 drop、不覆盖已有 collection**；重新入库写入新 `policy_version`；
-- 字段：
+**Milvus**：`itinerary_policy_clauses_v1`，一条款一向量。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `id` | VARCHAR(64) | chunk_id，主键 |
+| `clause_id` | VARCHAR(64) | 主键，稳定 ID |
 | `tenant_id` | VARCHAR(64) | partition key（schema 中标记） |
 | `doc_id` | VARCHAR(64) | 文档 ID |
 | `policy_version` | VARCHAR(32) | 制度版本 |
-| `section` | VARCHAR(256) | 章节标题 |
-| `page` | INT | 页码 |
-| `text` | VARCHAR(8192) | 原文 |
+| `clause_type` | VARCHAR(32) | chapter / article / clause / table / definition |
+| `path` | VARCHAR(512) | 文档路径 |
+| `parent_id` | VARCHAR(64) | 父条款 |
+| `title` | VARCHAR(256) | 条款标题 |
+| `text` | VARCHAR(8192) | 条款正文 |
 | `embedding` | FLOAT_VECTOR(1024) | 向量 |
+| `table_id` | VARCHAR(64) | 关联表格，可空 |
+| `refs` | JSON | 引用条款 ID 列表 |
 | `effective_from` | VARCHAR(10) | 生效日期 |
 | `effective_to` | VARCHAR(10) | 失效日期，可空 |
-| `metadata` | JSON | 扩展信息 |
 
-- 索引：HNSW，COSINE；
-- 检索过滤：`tenant_id` 分区 + `policy_version` / 生效日期标量过滤 + top-k=5。
+索引：HNSW，COSINE。检索过滤：`tenant_id` + `policy_version` + 生效日期。
 
-### 8.3 检索与降级
+**SQLite**：关系、结构、表格与关键词检索。
 
-- 检索结果返回 `id / text / section / page / policy_version`；
-- 图状态只保存 `policy_ref` 列表与摘要；
-- 最终回答可引用"《差旅制度》第 3.2 节"；
-- **权威判定仍由控制层规则引擎完成**；
-- Milvus 或 embedding 不可用时返回空结果并标记 `degraded=true`，规则引擎照常工作。
+```text
+policy_documents(doc_id, tenant_id, title, policy_version, effective_from, effective_to)
+policy_clauses(clause_id, parent_id, doc_id, path, clause_type, title, text, order_no)
+policy_edges(source_id, relation, target_id)
+policy_tables(table_id, source_clause_id, columns_json, rows_json)
+policy_definitions(definition_id, term, text, source_clause_id)
+policy_rules(rule_id, tenant_id, category, match_json, limit, severity,
+             allow_approval, source_clause_id, policy_version, effective_from, effective_to)
+policy_ingest_reviews(review_id, clause_id, reason, status, created_at)
+policy_fts(clause_id, title, text)    -- SQLite FTS5
+```
 
-### 8.4 索引版本化
+### 8.4 检索流程
 
-- collection 名带版本；
-- 元数据记录 `embedding_model`、`dimensions`、`chunk_config_version`；
-- 更换模型或维度时新建 collection 并重建，不在旧 collection 中混写。
+```text
+用户问题
+  → 查询理解：费用类型、城市等级、职级、日期、意图
+  → 混合召回：FTS5 关键词 + Milvus 向量
+  → RRF 融合，取前 8 个条款作为种子
+  → 图扩展 1–2 跳：
+       祖先（适用范围）、引用条款、例外条款、定义、同章节兄弟
+  → 表格解析：按 table_id 取结构化行，按用户职级/城市过滤
+  → 按文档顺序组装 context pack（含 clause_id 引用）
+  → 置信度判断：关键条款/表格缺失时标记 insufficient
+```
 
-### 8.5 三层记忆
+检索返回 4.4 定义的 `PolicyContext`：条款、表格、引用 ID、版本、`degraded`、`insufficient` 与检索 trace。
+
+规则：
+
+- 图状态只保存 `policy_refs` 与摘要，不保存整段制度；
+- 回答必须引用 `clause_id` 对应的文档/条款；
+- 检索不足时明确回答"制度未明确/无法确认"，不得让模型补全；
+- Milvus 或 embedding 不可用时返回 `degraded=true`，规则引擎照常工作；
+- 没有命中关键条款或表格时返回 `insufficient=true`，进入人工确认或追问。
+
+### 8.5 差标规则编译
+
+制度中的标准表格（职级 × 城市等级 × 金额）编译为结构化规则：
+
+```yaml
+- id: hotel-standard-L1-L2
+  match: { employee_level: ["L1", "L2"], city_tier: [1, 2] }
+  category: hotel
+  limit: 500
+  severity: block
+  allow_approval: true
+  source_clause_id: travel-policy/ch3/art12
+  policy_version: "2026.1"
+  effective_from: "2026-01-01"
+```
+
+编译流程：
+
+1. 从表格行生成候选规则；
+2. 校验：来源条款存在、表格行列完整、金额/职级/城市映射正确；
+3. 人工审核后启用；
+4. 制度版本更新时生成新规则版本，旧规则标记失效；
+5. 控制层只使用已启用规则；回答溢出原因时引用 `source_clause_id`。
+
+### 8.6 索引与版本
+
+- collection 名带版本：`itinerary_policy_clauses_v1`；
+- 元数据记录 `embedding_model`、`dimensions`、`parser_version`、`policy_version`；
+- 更换 embedding 模型或维度时新建 collection 并重建，不在旧 collection 中混写；
+- 检索默认只取当前有效版本；`supersedes` 关系用于展示版本差异；
+- 重新入库不修改历史条款，追加新版本。
+
+### 8.7 三层记忆
 
 | 记忆类型 | 存放位置 | 生命周期 | 进入图状态的内容 |
 |---|---|---|---|
@@ -551,6 +675,35 @@ class UserMemory(BaseModel):
 
 读取时机：`plan` 前加载相关偏好作为上下文，不把全部记忆放入 prompt。
 
+### 8.8 评估
+
+用金标问题集验证，而不只看回答是否通顺：
+
+| 类型 | 示例 | 指标 |
+|---|---|---|
+| 跨条款 | "住宿标准在哪里？" | 是否召回被引用条款与附表 |
+| 例外 | "超标但有紧急会议能否报销？" | 是否召回例外条款并正确适用 |
+| 表格 | "L2 去二线城市住 600 是否超标？" | 是否取到正确表格行与金额 |
+| 版本 | "2025 与 2026 版住宿标准差异？" | 是否区分版本与生效日期 |
+| 多跳 | "审批通过后超标部分谁承担？" | 是否串联引用链 |
+| 无答案 | "制度是否覆盖私人行程？" | 是否正确返回 insufficient |
+
+指标：条款召回率、引用准确率、表格行准确率、答案忠实度、`insufficient` 判定准确率。
+
+### 8.9 Demo 与生产取舍
+
+| 能力 | Demo | 生产 |
+|---|---|---|
+| PDF 解析 | PyMuPDF + 编号规则 | Docling / OCR + 版面分析 |
+| 结构抽取 | 规则 + 人工校对小样本 | LLM 辅助抽取 + 人工审核队列 |
+| 关键词检索 | SQLite FTS5 | Elasticsearch / OpenSearch |
+| 图扩展 | SQLite `policy_edges`，1–2 跳 | 图数据库或图服务 |
+| 重排 | RRF 融合 | Cross-encoder reranker |
+| 规则编译 | 手工 YAML + 来源校验 | 自动抽取 + 规则治理流程 |
+| 版本管理 | policy_version + 生效日期 | 版本对比、修订追踪、回滚 |
+
+demo 不引入 Neo4j；SQLite 关系表足以验证“强关联检索”的机制。
+
 ## 9. 控制层
 
 ### 9.1 差标规则
@@ -570,14 +723,16 @@ rules:
     limit: 500
     severity: block
     allow_approval: true
+    source_clause_id: travel-policy/ch3/art12
   - id: flight-cabin-L1
     match: { employee_level: ["L1"] }
     category: flight
     constraint: { cabin: ["economy"] }
     severity: warn
+    source_clause_id: travel-policy/ch2/art06
 ```
 
-求值顺序：精确规则 → 默认规则 → 无匹配则拒绝并记录原因。
+规则由制度表格编译，带 `source_clause_id`；未审核的规则不生效。求值顺序：精确规则 → 默认规则 → 无匹配则拒绝并记录原因。
 
 规则语义：
 
@@ -648,7 +803,7 @@ Span
 | 网关 | `gateway.http` |
 | 编排 | 每个节点一个 span；中断/恢复单独记录 |
 | 工具 | 每次调用一个 span，含风险等级与读写类型 |
-| 知识 | 检索 span，含 top-k、命中数、是否降级 |
+| 知识 | 检索 span，含种子数、图扩展条款数、表格命中、`insufficient`、是否降级 |
 | 模型 | 每次聊天/embedding 调用，含模型、tokens、成本、prompt_version |
 | 控制 | `control.check_policy`、`control.action_guard`，含 rule_ids 与决策 |
 
@@ -729,9 +884,9 @@ class RequestContext(BaseModel):
 
 | 层级 | 内容 | 依赖 |
 |---|---|---|
-| 单元测试 | 差标求值（表驱动）、Guard 条件、状态迁移、参数校验、revision 失效 | 纯 Python + 临时 SQLite |
-| 集成测试 | 图执行、interrupt/resume、Checkpoint 恢复、幂等、span 产出 | FakeModelGateway、FakeToolService、临时 SQLite |
-| 端到端场景 | 下列 8 个分支，使用脚本化模型响应 | 可选 Milvus；默认不调真实 LLM |
+| 单元测试 | 差标求值（表驱动）、Guard 条件、状态迁移、参数校验、revision 失效、条款树/引用/表格解析 | 纯 Python + 临时 SQLite |
+| 集成测试 | 图执行、interrupt/resume、Checkpoint 恢复、幂等、context pack 与引用、span 产出 | FakeModelGateway、FakeToolService、临时 SQLite |
+| 端到端场景 | 下列 12 个分支，使用脚本化模型响应 | 可选 Milvus；默认不调真实 LLM |
 
 端到端场景：
 
@@ -742,7 +897,11 @@ class RequestContext(BaseModel):
 5. 查询无结果：放宽条件或提示用户；
 6. 暂停/恢复、取消、等待超时；
 7. 工具临时失败重试；embedding 不可用时 RAG 降级；
-8. 未审批直接下单：Guard 拒绝并留审计。
+8. 未审批直接下单：Guard 拒绝并留审计；
+9. 跨条款问题：正确召回被引用条款与附表；
+10. 例外问题：召回到例外条款并正确适用；
+11. 表格问题：按职级/城市取到正确表格行与金额；
+12. 版本/无答案：区分制度版本；制度未覆盖时返回 `insufficient`，不编造。
 
 工具：`pytest`、`pytest-asyncio`、`httpx`。真实模型冒烟测试标记为 `@pytest.mark.live`，默认不运行。
 
@@ -759,9 +918,12 @@ class RequestContext(BaseModel):
 | 聊天模型 | DeepSeek（OpenAI 兼容） |
 | Embedding | 阿里云 `qwen3.7-text-embedding-flash`（1024 维） |
 | 向量库 | Milvus `127.0.0.1:19530` + pymilvus |
-| 结构化存储 | SQLite |
+| 结构化存储 | SQLite（条款树、引用边、表格、规则、记忆、trace） |
+| 关键词检索 | SQLite FTS5 |
+| 检索融合 | RRF（关键词 + 向量） |
 | 工具协议 | FastMCP（接口预留，demo 可先直接内置工具） |
-| 文档解析 | PyMuPDF |
+| 文档解析 | Docling（优先）/ PyMuPDF（demo 简化） |
+| 规则编译 | 制度表格 → SQLite `policy_rules` + 人工审核 |
 | 配置 | pydantic-settings |
 | 可观测 | OpenTelemetry 数据模型 + SQLite exporter；可选 Arize Phoenix |
 | 测试 | pytest + pytest-asyncio + httpx |
@@ -773,7 +935,7 @@ class RequestContext(BaseModel):
 - `DASHSCOPE_API_KEY`；
 - Milvus 已就绪；
 - Python 包由使用者通过 `uv add` 安装；
-- 可选：Arize Phoenix（本地 UI）。
+- 可选：Docling（生产级制度解析）、Arize Phoenix（本地 UI）。
 
 ### 14.3 生产替换
 
@@ -785,6 +947,9 @@ class RequestContext(BaseModel):
 | 缓存 / 限流 | Redis |
 | 模型网关 | LiteLLM Proxy / Higress / Kong AI Gateway |
 | 向量库 | 同一 Milvus 集群（或 pgvector） |
+| 制度解析 | Docling / OCR + 版面分析 + 人工校对 |
+| 关键词检索 | Elasticsearch / OpenSearch |
+| 图扩展 | 图数据库/图服务 + Cross-encoder reranker |
 | 可观测 | OTel Collector + Langfuse / Phoenix + Prometheus/Grafana |
 | 文档存储 | MinIO / 对象存储 |
 | 审批 | 企业现有审批系统 |
@@ -797,26 +962,33 @@ class RequestContext(BaseModel):
 | M0 骨架 | 包结构、配置、SQLite、trace 基础设施、健康检查 | 能启动，`/health` 返回各依赖状态 |
 | M1 主链路（假模型） | 网关、LangGraph 图、FakeModel、FakeTools、正常链路 | 脚本化对话可跑到"方案生成" |
 | M2 工具与状态机 | 工具注册/契约/Guard、mock 库存、Checkpoint、interrupt/resume | 场景 1、5、6 通过 |
-| M3 模型与知识 | 模型网关、DeepSeek 接入、Milvus RAG、embedding、记忆 | 真实模型下可完成查询与制度解释 |
+| M3 模型与知识 | 模型网关、DeepSeek 接入、制度解析、条款树/表格/引用图、混合检索、规则编译、记忆 | 真实模型下可完成查询、制度解释与引用 |
 | M4 审批与差标 | 规则引擎、审批 mock、驳回、revision、幂等 | 场景 2、3、4、8 通过 |
-| M5 可观测与打磨 | span 全链路、回放接口、最小 Web 页面、端到端测试 | 8 个场景全通过；可按 trace 回放 |
+| M5 可观测与打磨 | span 全链路、回放接口、最小 Web 页面、端到端测试 | 12 个场景全通过；可按 trace 回放 |
 
 ## 16. 验收标准
 
 1. 一条命令启动（依赖已安装）：`uv run uvicorn itinerary_agent.main:app`；
 2. 正常链路可完成：自然语言输入 → 查询 → 差标 → 审批/确认 → 下单；
-3. 8 个端到端场景全部通过；
+3. 12 个端到端场景全部通过；
 4. 中途修改预算/目的地后，旧选项、旧审批、旧确认全部失效；
 5. 任意任务可按 `trace_id` 回放，并能看出每一步属于哪一层；
 6. 模型调用只出现在模型网关，外部系统调用只出现在工具层（可用 import 检查或测试约束）；
 7. 未审批、未确认、revision 不一致的下单请求全部被拒绝并留审计；
-8. RAG 不可用时主流程继续，差标判定仍然有效。
+8. RAG 不可用时主流程继续，差标判定仍然有效；
+9. 跨条款、例外、表格、版本问题能引用正确条款，而不是只给相似段落；
+10. 检索不足时返回 `insufficient`，明确说明制度未覆盖，不编造；
+11. 每条差标规则都能追溯到 `source_clause_id` 和 `policy_version`。
 
 ## 17. 风险与取舍
 
 | 风险 | 影响 | 应对 |
 |---|---|---|
 | 制度文档外发 embedding | 合规风险 | demo 用模拟文档；生产评估私有化 embedding |
+| 条款/引用解析错误 | 规则错误或回答引用错条款 | 规则 + LLM 辅助抽取 + 人工校对 + 入库校验 |
+| 表格提取错误 | 差标判定错误 | 表格结构校验、来源行核对、金标测试 |
+| 制度版本漂移 | 使用过期标准 | `policy_version` + 生效日期 + `supersedes` + 检索过滤 |
+| 图扩展过度 | 上下文膨胀、误召回 | 限制 1–2 跳与最大条款数；RRF + 置信度门控 |
 | Milvus 单点/未启动 | RAG 不可用 | 健康检查、降级、规则引擎兜底 |
 | 模型输出不稳定 | 槽位/规划错误 | 结构化输出、schema 校验、修复重试、场景回归 |
 | 演示范围膨胀 | 工期延长 | 按 M0–M5 分阶段，未列入范围的层只留接口 |
@@ -838,9 +1010,9 @@ llm:
   base_url_env: DEEPSEEK_BASE_URL
   api_key_env: DEEPSEEK_API_KEY
   tiers:
-    light:     { model_env: DEEPSEEK_MODEL_LIGHT }
-    standard:  { model_env: DEEPSEEK_MODEL_STANDARD }
-    reasoning: { model_env: DEEPSEEK_MODEL_REASONING }
+    light:     { model_env: MODEL_LIGHT }
+    standard:  { model_env: MODEL_STANDARD }
+    reasoning: { model_env: MODEL_REASONING }
   fallback_enabled: true
 
 embedding:
@@ -854,10 +1026,20 @@ embedding:
 milvus:
   uri: http://127.0.0.1:19530
   token: ""
-  collection: itinerary_policy_chunks_v1
+  collection: itinerary_policy_clauses_v1
   metric_type: COSINE
   index_type: HNSW
-  top_k: 5
+
+policy:
+  docs_dir: config/policies/docs
+  review_dir: data/policy_review
+  fts_enabled: true
+  retrieval:
+    dense_top_k: 10
+    keyword_top_k: 10
+    seed_top_k: 8
+    max_expanded_clauses: 20
+    graph_hops: 2
 
 storage:
   sqlite_path: ./data/itinerary.db
@@ -881,6 +1063,8 @@ observability:
 | `MISSING_SLOT` | 关键槽位缺失 | 回 `understand` 追问 |
 | `NO_RESULTS` | 查询无结果 | 放宽条件或提示修改 |
 | `POLICY_BLOCKED` | 差标阻断 | 修改或走审批 |
+| `POLICY_INSUFFICIENT` | 制度条款/表格不足 | 追问或转人工确认 |
+| `POLICY_REFERENCE_UNRESOLVED` | 条款引用未解析 | 使用已审核规则并标记降级 |
 | `APPROVAL_REQUIRED` | 需要审批 | 进入审批流程 |
 | `APPROVAL_REJECTED` | 审批驳回 | 回 `WAITING_HUMAN` |
 | `STALE_REVISION` | revision 不一致 | 重新校验/审批 |

@@ -51,9 +51,10 @@ src/itinerary_agent/
 │   └── builtin.py             # 内置工具处理器
 ├── knowledge/
 │   ├── __init__.py
-│   ├── chunker.py             # PDF 解析与切分
-│   ├── embedder.py            # EmbeddingPort 实现
-│   ├── milvus_store.py
+│   ├── structure.py           # 制度解析：条款树、表格、引用/例外
+│   ├── policy_store.py        # SQLite 条款/边/表格/FTS5
+│   ├── milvus_store.py        # 条款级向量
+│   ├── retrieval.py           # 混合召回 + 图扩展 + context pack
 │   ├── service.py             # KnowledgeService
 │   ├── memory.py              # 短期/长期记忆
 │   └── ingest.py              # 入库 CLI
@@ -236,6 +237,11 @@ class Settings(BaseSettings):
     trace_retention_days: int = 7
     capture_prompt: bool = False
     mock_approval_delay_seconds: float = 5.0
+
+    policy_version: str = "2026.1"
+    policy_seed_top_k: int = 8
+    policy_graph_hops: int = 2
+    policy_max_expanded_clauses: int = 20
 ```
 
 - [ ] **Step 4: 运行测试确认通过**
@@ -413,6 +419,7 @@ class Violation(BaseModel):
     message: str
     limit: float | None = None
     actual: float | None = None
+    source_clause_id: str | None = None
 
 
 class PolicyResult(BaseModel):
@@ -485,12 +492,38 @@ class TaskSnapshot(BaseModel):
     confirmed: bool = False
 
 
-class PolicySnippet(BaseModel):
-    ref: str
+class PolicyFilters(BaseModel):
+    city_tier: int | None = None
+    employee_level: str | None = None
+    effective_date: str | None = None
+
+
+class PolicyClause(BaseModel):
+    clause_id: str
+    path: str
+    title: str
     text: str
-    section: str | None = None
-    page: int | None = None
+    clause_type: str
     policy_version: str
+    table_id: str | None = None
+    refs: list[str] = Field(default_factory=list)
+
+
+class PolicyTable(BaseModel):
+    table_id: str
+    source_clause_id: str
+    columns: list[str]
+    rows: list[dict]
+
+
+class PolicyContext(BaseModel):
+    clauses: list[PolicyClause]
+    tables: list[PolicyTable]
+    citations: list[str]
+    policy_version: str
+    degraded: bool = False
+    insufficient: bool = False
+    trace: dict = Field(default_factory=dict)
 
 
 class UserMemory(BaseModel):
@@ -2043,6 +2076,8 @@ async def confirm(state: dict, deps) -> dict:
     if state.get("confirmed"):
         return {"status": "EXECUTING"}
     message = "请确认方案后继续下单。"
+    if state.get("pending_human"):
+        message = state["pending_human"].get("message", message)
     policy = state.get("policy_result") or {}
     if policy.get("passed") is False:
         message = "方案不符合差标，请修改预算/选项，或取消本次任务。"
@@ -2053,9 +2088,21 @@ async def confirm(state: dict, deps) -> dict:
             options=state.get("options", {}).get("flights", []),
         ).model_dump(mode="json")
     )
+    if isinstance(decision, dict) and decision.get("action") == "modify":
+        return {"status": "PLANNING", "confirmed": False, "pending_human": None}
     if isinstance(decision, dict) and decision.get("action") == "cancel":
-        return {"status": "CANCELLED"}
-    return {"confirmed": True, "status": "EXECUTING"}
+        return {"status": "CANCELLED", "pending_human": None}
+    selected = decision.get("selected") if isinstance(decision, dict) else None
+    if not selected:
+        options = state.get("options", {})
+        flights = options.get("flights", [])
+        hotels = options.get("hotels", [])
+        selected = {
+            "flight_id": flights[0].get("option_id") if flights else None,
+            "hotel_id": hotels[0].get("option_id") if hotels else None,
+        }
+    return {"selected": selected, "confirmed": True,
+            "pending_human": None, "status": "EXECUTING"}
 ```
 
 `graph.py` 增加 confirm：
@@ -2327,38 +2374,77 @@ def resolve_model(settings: Settings, tier: str) -> str:
 `gateway.py`：
 
 ```python
+import hashlib
 import json
+from datetime import datetime, timezone
+from uuid import uuid4
 
 from openai import AsyncOpenAI
 
 from itinerary_agent.domain.models import CallContext, Completion, ModelTier
 from itinerary_agent.infra.config import Settings
+from itinerary_agent.infra.db import Database
 from itinerary_agent.model_gateway.router import resolve_model
 
 
 class OpenAIChatGateway:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, db: Database | None = None):
         self.settings = settings
-        self.client = AsyncOpenAI(base_url=settings.deepseek_base_url,
-                                  api_key=settings.deepseek_api_key or "missing")
+        self.db = db
+        self.client = AsyncOpenAI(
+            base_url=settings.deepseek_base_url,
+            api_key=settings.deepseek_api_key or "missing",
+            timeout=30,
+            max_retries=2,
+        )
 
     async def complete(self, ctx: CallContext, messages: list[dict],
                        tier: ModelTier, response_schema: dict | None = None) -> Completion:
         model = resolve_model(self.settings, tier.value)
+        messages = list(messages)
+        if response_schema:
+            messages.append({"role": "user", "content": "只输出 JSON，并满足给定 schema。"})
         kwargs = {"model": model, "messages": messages, "temperature": 0}
         if response_schema:
-            messages = messages + [{"role": "user",
-                                    "content": "只输出 JSON，并满足给定 schema。"}]
-            kwargs["messages"] = messages
             kwargs["response_format"] = {"type": "json_object"}
+
+        cacheable = ctx.purpose in {"classify", "understand"}
+        cache_key = hashlib.sha256(
+            json.dumps([model, messages, response_schema], sort_keys=True,
+                       ensure_ascii=False).encode()
+        ).hexdigest()
+        if cacheable and self.db is not None:
+            row = await self.db.fetchone(
+                "SELECT value FROM llm_cache WHERE cache_key = ?", (cache_key,)
+            )
+            if row:
+                return Completion.model_validate_json(row["value"])
+
         resp = await self.client.chat.completions.create(**kwargs)
         usage = resp.usage
-        return Completion(
+        result = Completion(
             text=resp.choices[0].message.content or "",
             model=model,
             prompt_tokens=usage.prompt_tokens if usage else 0,
             completion_tokens=usage.completion_tokens if usage else 0,
         )
+        if self.db is not None:
+            if cacheable:
+                await self.db.execute(
+                    "INSERT OR REPLACE INTO llm_cache (cache_key, value, created_at) "
+                    "VALUES (?, ?, ?)",
+                    (cache_key, result.model_dump_json(),
+                     datetime.now(timezone.utc).isoformat()),
+                )
+            await self.db.execute(
+                "INSERT INTO llm_calls (call_id, trace_id, task_id, tenant_id, purpose, "
+                "model, prompt_tokens, completion_tokens, cost_usd, duration_ms, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (uuid4().hex, ctx.trace_id, ctx.task_id, ctx.tenant_id, ctx.purpose,
+                 model, result.prompt_tokens, result.completion_tokens,
+                 result.cost_usd, 0.0, datetime.now(timezone.utc).isoformat()),
+            )
+        return result
 
     async def stream(self, ctx: CallContext, messages: list[dict], tier: ModelTier):
         completion = await self.complete(ctx, messages, tier)
@@ -2368,45 +2454,7 @@ class OpenAIChatGateway:
         raise NotImplementedError("use DashScopeEmbedder")
 ```
 
-在 `OpenAIChatGateway.__init__` 增加 `db: Database | None = None`，并在 `complete()` 中加入缓存与成本记录：
-
-```python
-import hashlib
-
-cacheable = ctx.purpose in {"classify", "understand"}
-cache_key = hashlib.sha256(
-    json.dumps([model, messages], sort_keys=True, ensure_ascii=False).encode()
-).hexdigest()
-if cacheable and self.db is not None:
-    row = await self.db.fetchone("SELECT value FROM llm_cache WHERE cache_key = ?", (cache_key,))
-    if row:
-        return Completion.model_validate_json(row["value"])
-
-# 在 resp = await self.client.chat.completions.create(**kwargs) 之后：
-result = Completion(
-    text=resp.choices[0].message.content or "",
-    model=model,
-    prompt_tokens=usage.prompt_tokens if usage else 0,
-    completion_tokens=usage.completion_tokens if usage else 0,
-)
-if self.db is not None:
-    if cacheable:
-        await self.db.execute(
-            "INSERT OR REPLACE INTO llm_cache (cache_key, value, created_at) VALUES (?, ?, ?)",
-            (cache_key, result.model_dump_json(), datetime.now(timezone.utc).isoformat()),
-        )
-    await self.db.execute(
-        "INSERT INTO llm_calls (call_id, trace_id, task_id, tenant_id, purpose, model, "
-        "prompt_tokens, completion_tokens, cost_usd, duration_ms, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (uuid4().hex, ctx.trace_id, ctx.task_id, ctx.tenant_id, ctx.purpose, model,
-         result.prompt_tokens, result.completion_tokens, result.cost_usd, 0.0,
-         datetime.now(timezone.utc).isoformat()),
-    )
-return result
-```
-
-`container.py` 创建网关时传入 `db=self.db`。
+`cost_usd` 在 demo 阶段先记 0，后续接入价格表再补；节点侧仍需用 Pydantic 校验 `response_schema` 对应的输出。`container.py` 创建网关时传入 `db=self.db`。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -2422,43 +2470,64 @@ git commit -m "feat: add openai-compatible chat gateway"
 
 ---
 
-### Task 15：DashScope Embedding 与 Milvus
+### Task 15：Embedding 与制度结构化存储
 
 **Files:**
 - Create: `src/itinerary_agent/model_gateway/embeddings.py`
 - Create: `src/itinerary_agent/knowledge/__init__.py`
+- Create: `src/itinerary_agent/knowledge/policy_store.py`
 - Create: `src/itinerary_agent/knowledge/milvus_store.py`
-- Create: `src/itinerary_agent/knowledge/service.py`
-- Test: `tests/test_knowledge.py`
+- Test: `tests/test_policy_store.py`
 
 - [ ] **Step 1: 写失败测试**
 
 ```python
-# tests/test_knowledge.py
-from itinerary_agent.knowledge.service import KnowledgeService
+# tests/test_policy_store.py
+from itinerary_agent.domain.models import PolicyTable
+from itinerary_agent.infra.db import Database
+from itinerary_agent.knowledge.policy_store import PolicyStore
 
 
-class FakeEmbedder:
-    async def embed(self, ctx, texts):
-        return [[0.1] * 1024 for _ in texts]
+async def test_store_clause_edges_tables_and_fts(tmp_path):
+    db = Database(tmp_path / "policy.db")
+    await db.connect()
+    store = PolicyStore(db)
+    await store.init()
 
+    await store.upsert_clause({
+        "clause_id": "c1", "tenant_id": "demo-company", "doc_id": "travel-policy",
+        "parent_id": "art1", "path": "travel-policy/ch3/art1/c1",
+        "clause_type": "clause", "title": "住宿标准", "text": "一线城市住宿上限 500 元。",
+        "table_id": "t1", "policy_version": "2026.1",
+        "effective_from": "2026-01-01", "effective_to": None, "order_no": 1,
+    })
+    await store.upsert_clause({
+        "clause_id": "c2", "tenant_id": "demo-company", "doc_id": "travel-policy",
+        "parent_id": "art1", "path": "travel-policy/ch3/art1/c2",
+        "clause_type": "clause", "title": "附表说明", "text": "具体标准见附表二。",
+        "table_id": None, "policy_version": "2026.1",
+        "effective_from": "2026-01-01", "effective_to": None, "order_no": 2,
+    })
+    await store.add_edge("c1", "references", "c2")
+    await store.upsert_table(PolicyTable(
+        table_id="t1", source_clause_id="c1", columns=["职级", "城市", "上限"],
+        rows=[{"职级": "L2", "城市": "一线", "上限": 500}],
+    ))
 
-class FakeStore:
-    async def search(self, tenant_id, vector, top_k):
-        return [{"id": "c1", "text": "住宿标准 500 元", "section": "住宿标准",
-                 "page": 3, "policy_version": "2026.1"}]
+    hits = await store.keyword_search("demo-company", "2026.1", "住宿标准", limit=5)
+    assert hits[0]["clause_id"] == "c1"
 
+    expanded = await store.expand(["c1"], hops=1)
+    assert "c2" in [c["clause_id"] for c in expanded]
 
-async def test_search_policy_returns_snippet():
-    service = KnowledgeService(embedder=FakeEmbedder(), store=FakeStore())
-    ctx = type("Ctx", (), {"trace_id": "t", "tenant_id": "demo-company"})()
-    result = await service.search_policy(ctx, "北京住宿标准")
-    assert result[0].section == "住宿标准"
+    table = await store.get_table("t1")
+    assert table.rows[0]["上限"] == 500
+    await db.close()
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `uv run pytest tests/test_knowledge.py -v`
+Run: `uv run pytest tests/test_policy_store.py -v`
 Expected: FAIL — module not found
 
 - [ ] **Step 3: 写实现**
@@ -2480,16 +2549,174 @@ class DashScopeEmbedder:
 
     async def embed(self, ctx: CallContext, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
-        batch_size = self.settings.embedding_batch_size
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+        for i in range(0, len(texts), self.settings.embedding_batch_size):
+            batch = texts[i:i + self.settings.embedding_batch_size]
             resp = await self.client.embeddings.create(
                 model=self.settings.embedding_model,
                 input=batch,
                 dimensions=self.settings.embedding_dimensions,
             )
-            vectors.extend([item.embedding for item in resp.data])
+            vectors.extend(item.embedding for item in resp.data)
         return vectors
+```
+
+`knowledge/policy_store.py`：
+
+> demo 中 `table_id` 采用 `{tenant_id}:{policy_version}:{table_id}` 约定，避免跨租户/版本冲突；生产环境应改为 `(tenant_id, policy_version, table_id)` 复合主键。
+
+```python
+import json
+
+from itinerary_agent.domain.models import PolicyTable
+from itinerary_agent.infra.db import Database
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS policy_clauses (
+  clause_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, doc_id TEXT NOT NULL,
+  parent_id TEXT, path TEXT NOT NULL, clause_type TEXT NOT NULL,
+  title TEXT NOT NULL, text TEXT NOT NULL, table_id TEXT,
+  policy_version TEXT NOT NULL, effective_from TEXT, effective_to TEXT,
+  order_no INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS policy_edges (
+  source_id TEXT NOT NULL, relation TEXT NOT NULL, target_id TEXT NOT NULL,
+  PRIMARY KEY (source_id, relation, target_id)
+);
+CREATE TABLE IF NOT EXISTS policy_tables (
+  table_id TEXT PRIMARY KEY, source_clause_id TEXT NOT NULL,
+  columns_json TEXT NOT NULL, rows_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS policy_definitions (
+  definition_id TEXT PRIMARY KEY, term TEXT NOT NULL, text TEXT NOT NULL,
+  source_clause_id TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS policy_ingest_reviews (
+  review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  clause_id TEXT NOT NULL, ref_text TEXT NOT NULL, reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS policy_fts
+USING fts5(clause_id UNINDEXED, title, text, tokenize='trigram');
+"""
+
+
+class PolicyStore:
+    def __init__(self, db: Database):
+        self.db = db
+
+    async def init(self) -> None:
+        await self.db.conn.executescript(SCHEMA)
+        await self.db.conn.commit()
+
+    async def upsert_clause(self, data: dict) -> None:
+        await self.db.execute(
+            "INSERT OR REPLACE INTO policy_clauses (clause_id, tenant_id, doc_id, parent_id, "
+            "path, clause_type, title, text, table_id, policy_version, effective_from, "
+            "effective_to, order_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (data["clause_id"], data["tenant_id"], data["doc_id"], data.get("parent_id"),
+             data["path"], data["clause_type"], data["title"], data["text"],
+             data.get("table_id"), data["policy_version"], data.get("effective_from"),
+             data.get("effective_to"), data["order_no"]),
+        )
+        await self.db.execute("DELETE FROM policy_fts WHERE clause_id = ?", (data["clause_id"],))
+        await self.db.execute(
+            "INSERT INTO policy_fts (clause_id, title, text) VALUES (?, ?, ?)",
+            (data["clause_id"], data["title"], data["text"]),
+        )
+
+    async def add_edge(self, source_id: str, relation: str, target_id: str) -> None:
+        await self.db.execute(
+            "INSERT OR IGNORE INTO policy_edges (source_id, relation, target_id) "
+            "VALUES (?, ?, ?)",
+            (source_id, relation, target_id),
+        )
+
+    async def add_review(self, clause_id: str, ref_text: str, reason: str) -> None:
+        await self.db.execute(
+            "INSERT INTO policy_ingest_reviews (clause_id, ref_text, reason, created_at) "
+            "VALUES (?, ?, ?, datetime('now'))",
+            (clause_id, ref_text, reason),
+        )
+
+    async def upsert_table(self, table: PolicyTable) -> None:
+        await self.db.execute(
+            "INSERT OR REPLACE INTO policy_tables "
+            "(table_id, source_clause_id, columns_json, rows_json) VALUES (?, ?, ?, ?)",
+            (table.table_id, table.source_clause_id,
+             json.dumps(table.columns, ensure_ascii=False),
+             json.dumps(table.rows, ensure_ascii=False)),
+        )
+
+    async def get_table(self, table_id: str) -> PolicyTable | None:
+        row = await self.db.fetchone(
+            "SELECT * FROM policy_tables WHERE table_id = ?", (table_id,)
+        )
+        if row is None:
+            return None
+        return PolicyTable(table_id=row["table_id"],
+                           source_clause_id=row["source_clause_id"],
+                           columns=json.loads(row["columns_json"]),
+                           rows=json.loads(row["rows_json"]))
+
+    async def get_clause(self, clause_id: str) -> dict | None:
+        row = await self.db.fetchone(
+            "SELECT * FROM policy_clauses WHERE clause_id = ?", (clause_id,)
+        )
+        return dict(row) if row else None
+
+    async def keyword_search(self, tenant_id: str, policy_version: str,
+                             query: str, limit: int = 10) -> list[dict]:
+        safe = query.replace('"', '""')
+        fts_query = f'"{safe}"'
+        rows = await self.db.fetchall(
+            "SELECT c.* FROM policy_fts f JOIN policy_clauses c ON c.clause_id = f.clause_id "
+            "WHERE policy_fts MATCH ? AND c.tenant_id = ? AND c.policy_version = ? "
+            "ORDER BY rank LIMIT ?",
+            (fts_query, tenant_id, policy_version, limit),
+        )
+        return [dict(r) for r in rows]
+
+    async def expand(self, seed_ids: list[str], hops: int = 1) -> list[dict]:
+        visited = set(seed_ids)
+        frontier = set(seed_ids)
+        for _ in range(hops):
+            if not frontier:
+                break
+            placeholders = ",".join("?" for _ in frontier)
+            rows = await self.db.fetchall(
+                f"SELECT target_id FROM policy_edges WHERE source_id IN ({placeholders})",
+                tuple(frontier),
+            )
+            next_ids = {r["target_id"] for r in rows} - visited
+            for clause_id in list(frontier):
+                row = await self.db.fetchone(
+                    "SELECT parent_id FROM policy_clauses WHERE clause_id = ?", (clause_id,)
+                )
+                if row and row["parent_id"]:
+                    next_ids.add(row["parent_id"])
+            visited.update(next_ids)
+            frontier = next_ids
+        if not visited:
+            return []
+        placeholders = ",".join("?" for _ in visited)
+        rows = await self.db.fetchall(
+            f"SELECT * FROM policy_clauses WHERE clause_id IN ({placeholders}) ORDER BY path",
+            tuple(visited),
+        )
+        edge_rows = await self.db.fetchall(
+            f"SELECT source_id, target_id FROM policy_edges "
+            f"WHERE relation = 'references' AND source_id IN ({placeholders})",
+            tuple(visited),
+        )
+        refs_by_source: dict[str, list[str]] = {}
+        for edge in edge_rows:
+            refs_by_source.setdefault(edge["source_id"], []).append(edge["target_id"])
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["refs"] = refs_by_source.get(item["clause_id"], [])
+            result.append(item)
+        return result
 ```
 
 `knowledge/milvus_store.py`：
@@ -2500,7 +2727,7 @@ from pymilvus import DataType, MilvusClient
 from itinerary_agent.infra.config import Settings
 
 
-class MilvusPolicyStore:
+class MilvusClauseStore:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.client = MilvusClient(uri=settings.milvus_uri, token=settings.milvus_token)
@@ -2510,107 +2737,117 @@ class MilvusPolicyStore:
         if self.client.has_collection(name):
             return
         schema = self.client.create_schema(auto_id=False, enable_dynamic_field=False)
-        schema.add_field("id", DataType.VARCHAR, is_primary=True, max_length=64)
+        schema.add_field("clause_id", DataType.VARCHAR, is_primary=True, max_length=64)
         schema.add_field("tenant_id", DataType.VARCHAR, max_length=64, is_partition_key=True)
         schema.add_field("doc_id", DataType.VARCHAR, max_length=64)
         schema.add_field("policy_version", DataType.VARCHAR, max_length=32)
-        schema.add_field("section", DataType.VARCHAR, max_length=256)
-        schema.add_field("page", DataType.INT64)
+        schema.add_field("clause_type", DataType.VARCHAR, max_length=32)
+        schema.add_field("path", DataType.VARCHAR, max_length=512)
+        schema.add_field("parent_id", DataType.VARCHAR, max_length=64)
+        schema.add_field("title", DataType.VARCHAR, max_length=256)
         schema.add_field("text", DataType.VARCHAR, max_length=8192)
-        schema.add_field("embedding", DataType.FLOAT_VECTOR,
-                         dim=self.settings.embedding_dimensions)
+        schema.add_field("table_id", DataType.VARCHAR, max_length=64)
+        schema.add_field("refs", DataType.JSON)
         schema.add_field("effective_from", DataType.VARCHAR, max_length=10)
         schema.add_field("effective_to", DataType.VARCHAR, max_length=10)
-        schema.add_field("metadata", DataType.JSON)
+        schema.add_field("embedding", DataType.FLOAT_VECTOR,
+                         dim=self.settings.embedding_dimensions)
         index = self.client.prepare_index_params()
         index.add_index(field_name="embedding", index_type="HNSW", metric_type="COSINE",
                         params={"M": 16, "efConstruction": 200})
         self.client.create_collection(name, schema=schema, index_params=index)
 
-    async def search(self, tenant_id: str, vector: list[float], top_k: int) -> list[dict]:
+    def upsert(self, rows: list[dict]) -> None:
+        self.client.upsert(collection_name=self.settings.milvus_collection, data=rows)
+
+    def search(self, tenant_id: str, policy_version: str, vector: list[float],
+               limit: int = 10) -> list[dict]:
         results = self.client.search(
             collection_name=self.settings.milvus_collection,
-            data=[vector], anns_field="embedding", limit=top_k,
-            filter=f'tenant_id == "{tenant_id}"',
-            output_fields=["text", "section", "page", "policy_version"],
+            data=[vector], anns_field="embedding", limit=limit,
+            filter=f'tenant_id == "{tenant_id}" and policy_version == "{policy_version}"',
+            output_fields=["clause_id", "title", "text", "table_id", "refs"],
         )
-        hits = []
-        for hit in results[0]:
-            entity = hit["entity"]
-            hits.append({
-                "id": hit["id"],
-                "text": entity["text"],
-                "section": entity["section"],
-                "page": entity["page"],
-                "policy_version": entity["policy_version"],
-            })
-        return hits
-```
-
-`knowledge/service.py`：
-
-```python
-from itinerary_agent.domain.models import CallContext, PolicySnippet
-
-
-class KnowledgeService:
-    def __init__(self, embedder, store):
-        self.embedder = embedder
-        self.store = store
-
-    async def search_policy(self, ctx, query: str, top_k: int = 5) -> list[PolicySnippet]:
-        try:
-            call_ctx = CallContext(trace_id=ctx.trace_id, tenant_id=ctx.tenant_id, purpose="embed")
-            vector = (await self.embedder.embed(call_ctx, [query]))[0]
-            hits = await self.store.search(ctx.tenant_id, vector, top_k)
-            return [PolicySnippet(ref=h["id"], text=h["text"], section=h["section"],
-                                  page=h["page"], policy_version=h["policy_version"])
-                    for h in hits]
-        except Exception:
-            return []
+        return [{"clause_id": hit["id"], "score": hit["distance"], **hit["entity"]}
+                for hit in results[0]]
 ```
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `uv run pytest tests/test_knowledge.py -v`
+Run: `uv run pytest tests/test_policy_store.py -v`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/itinerary_agent/model_gateway/embeddings.py src/itinerary_agent/knowledge tests/test_knowledge.py
-git commit -m "feat: add dashscope embedding and milvus store"
+git add src/itinerary_agent/model_gateway/embeddings.py src/itinerary_agent/knowledge tests/test_policy_store.py
+git commit -m "feat: add clause-level policy storage"
 ```
 
 ---
 
-### Task 16：制度入库与记忆存储
+### Task 16：制度解析、条款树与引用图入库
 
 **Files:**
-- Create: `src/itinerary_agent/knowledge/chunker.py`
+- Create: `src/itinerary_agent/knowledge/structure.py`
 - Create: `src/itinerary_agent/knowledge/ingest.py`
 - Create: `src/itinerary_agent/knowledge/memory.py`
+- Test: `tests/test_policy_structure.py`
 - Test: `tests/test_memory.py`
 
 - [ ] **Step 1: 写失败测试**
 
 ```python
-# tests/test_memory.py
-from datetime import datetime, timezone
-
-from itinerary_agent.domain.models import UserMemory
-from itinerary_agent.infra.db import Database
-from itinerary_agent.knowledge.memory import MemoryStore
+# tests/test_policy_structure.py
+from itinerary_agent.knowledge.structure import (PolicyBundle, resolve_references,
+                                                 validate_bundle)
 
 
-async def test_upsert_and_read_memory(tmp_path):
+def test_bundle_keeps_hierarchy_and_resolves_edges():
+    bundle = PolicyBundle.model_validate({
+        "doc_id": "travel-policy", "tenant_id": "demo-company",
+        "policy_version": "2026.1",
+        "clauses": [
+            {"clause_id": "ch3", "parent_id": None, "path": "travel-policy/ch3",
+             "clause_type": "chapter", "title": "住宿", "text": "住宿标准见 c1。",
+             "refs": [], "ref_texts": [], "exceptions": [], "table_id": None, "order_no": 1},
+            {"clause_id": "c1", "parent_id": "ch3", "path": "travel-policy/ch3/c1",
+             "clause_type": "clause", "title": "住宿标准",
+             "text": "一线城市住宿上限 500 元，具体见附表二，另见第3.2条。",
+             "refs": ["c2"], "ref_texts": ["附表二", "第3.2条"],
+             "exceptions": ["c3"], "table_id": "t1", "order_no": 2},
+            {"clause_id": "c2", "parent_id": "ch3", "path": "travel-policy/ch3/c2",
+             "clause_type": "clause", "title": "附表二", "text": "标准表见 t1。",
+             "refs": [], "ref_texts": [], "exceptions": [], "table_id": "t1", "order_no": 3},
+            {"clause_id": "c3", "parent_id": "ch3", "path": "travel-policy/ch3/c3",
+             "clause_type": "clause", "title": "例外", "text": "紧急会议可特批。",
+             "refs": [], "ref_texts": [], "exceptions": [], "table_id": None, "order_no": 4},
+        ],
+        "tables": [{"table_id": "t1", "source_clause_id": "c1",
+                    "columns": ["职级", "城市", "上限"],
+                    "rows": [{"职级": "L2", "城市": "一线", "上限": 500}]}],
+    })
+    validate_bundle(bundle)
+    edges, unresolved = resolve_references(bundle)
+    assert ("c1", "references", "c2") in edges
+    assert ("c1", "exception_to", "c3") in edges
+    assert unresolved == [("c1", "第3.2条")]
+
+
+async def test_memory_store_roundtrip(tmp_path):
+    from datetime import datetime, timezone
+
+    from itinerary_agent.domain.models import UserMemory
+    from itinerary_agent.infra.db import Database
+    from itinerary_agent.knowledge.memory import MemoryStore
+
     db = Database(tmp_path / "m.db")
     await db.connect()
     store = MemoryStore(db)
-    memory = UserMemory(memory_id="m1", tenant_id="demo-company", user_id="u001",
-                        kind="preference", key="hotel_chain", value="华住",
-                        confidence=0.9, updated_at=datetime.now(timezone.utc))
-    await store.upsert(memory)
+    await store.upsert(UserMemory(memory_id="m1", tenant_id="demo-company",
+                                  user_id="u001", kind="preference",
+                                  key="hotel_chain", value="华住", confidence=0.9,
+                                  updated_at=datetime.now(timezone.utc)))
     result = await store.get("demo-company", "u001", ["preference"])
     assert result[0].value == "华住"
     await db.close()
@@ -2618,10 +2855,146 @@ async def test_upsert_and_read_memory(tmp_path):
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `uv run pytest tests/test_memory.py -v`
+Run: `uv run pytest tests/test_policy_structure.py tests/test_memory.py -v`
 Expected: FAIL — module not found
 
 - [ ] **Step 3: 写实现**
+
+`knowledge/structure.py`：
+
+```python
+from pydantic import BaseModel, Field
+
+from itinerary_agent.domain.models import PolicyTable
+
+
+class ParsedClause(BaseModel):
+    clause_id: str
+    parent_id: str | None = None
+    path: str
+    clause_type: str
+    title: str
+    text: str
+    refs: list[str] = Field(default_factory=list)          # 已解析的 clause_id
+    ref_texts: list[str] = Field(default_factory=list)     # 原始引用文本："附表二"、"第3.2条"
+    exceptions: list[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
+    table_id: str | None = None
+    order_no: int
+
+
+class PolicyBundle(BaseModel):
+    doc_id: str
+    tenant_id: str
+    policy_version: str
+    effective_from: str = "2026-01-01"
+    effective_to: str | None = None
+    clauses: list[ParsedClause]
+    tables: list[PolicyTable] = Field(default_factory=list)
+
+
+def build_alias_map(bundle: PolicyBundle) -> dict[str, str]:
+    alias: dict[str, str] = {}
+    for clause in bundle.clauses:
+        alias[clause.clause_id] = clause.clause_id
+        alias[clause.path] = clause.clause_id
+        alias[clause.title] = clause.clause_id
+        for name in clause.aliases:
+            alias[name] = clause.clause_id
+    return alias
+
+
+def resolve_references(bundle: PolicyBundle) -> tuple[list[tuple[str, str, str]], list[tuple[str, str]]]:
+    alias = build_alias_map(bundle)
+    edges: list[tuple[str, str, str]] = []
+    unresolved: list[tuple[str, str]] = []
+    for clause in bundle.clauses:
+        for ref in clause.refs:
+            edges.append((clause.clause_id, "references", ref))
+        for text in clause.ref_texts:
+            target = alias.get(text)
+            if target:
+                edges.append((clause.clause_id, "references", target))
+            else:
+                unresolved.append((clause.clause_id, text))
+        for exc in clause.exceptions:
+            edges.append((clause.clause_id, "exception_to", exc))
+        if clause.parent_id:
+            edges.append((clause.clause_id, "child_of", clause.parent_id))
+    return edges, unresolved
+
+
+def validate_bundle(bundle: PolicyBundle) -> None:
+    ids = {c.clause_id for c in bundle.clauses}
+    for clause in bundle.clauses:
+        if clause.parent_id and clause.parent_id not in ids:
+            raise ValueError(f"missing parent: {clause.parent_id}")
+        for ref in clause.refs + clause.exceptions:
+            if ref not in ids:
+                raise ValueError(f"missing reference: {ref}")
+    table_ids = {t.table_id for t in bundle.tables}
+    for clause in bundle.clauses:
+        if clause.table_id and clause.table_id not in table_ids:
+            raise ValueError(f"missing table: {clause.table_id}")
+
+
+def bundle_from_json(data: dict) -> PolicyBundle:
+    return PolicyBundle.model_validate(data)
+
+
+# 生产解析器（Docling / LLM 辅助抽取）最终也输出 PolicyBundle；
+# demo 先用结构化 JSON fixture 验证条款树、表格与引用关系。
+```
+
+`knowledge/ingest.py`：
+
+```python
+from itinerary_agent.domain.models import CallContext
+from itinerary_agent.knowledge.structure import (PolicyBundle, resolve_references,
+                                                 validate_bundle)
+
+
+async def ingest_bundle(bundle: PolicyBundle, policy_store, clause_store, embedder) -> int:
+    validate_bundle(bundle)
+    await policy_store.init()
+    for clause in bundle.clauses:
+        await policy_store.upsert_clause({
+            "clause_id": clause.clause_id, "tenant_id": bundle.tenant_id,
+            "doc_id": bundle.doc_id, "parent_id": clause.parent_id,
+            "path": clause.path, "clause_type": clause.clause_type,
+            "title": clause.title, "text": clause.text, "table_id": clause.table_id,
+            "policy_version": bundle.policy_version,
+            "effective_from": bundle.effective_from,
+            "effective_to": bundle.effective_to, "order_no": clause.order_no,
+        })
+    edges, unresolved = resolve_references(bundle)
+    for source, relation, target in edges:
+        await policy_store.add_edge(source, relation, target)
+    for clause_id, ref_text in unresolved:
+        await policy_store.add_review(clause_id, ref_text, "unresolved_reference")
+    for table in bundle.tables:
+        await policy_store.upsert_table(table)
+
+    texts = [f"{c.path} {c.title} {c.text}" for c in bundle.clauses]
+    call_ctx = CallContext(trace_id="ingest", tenant_id=bundle.tenant_id, purpose="embed")
+    vectors = await embedder.embed(call_ctx, texts)
+    rows = []
+    for clause, vector in zip(bundle.clauses, vectors):
+        refs = [target for source, relation, target in edges
+                if source == clause.clause_id and relation == "references"]
+        rows.append({
+            "clause_id": clause.clause_id, "tenant_id": bundle.tenant_id,
+            "doc_id": bundle.doc_id, "policy_version": bundle.policy_version,
+            "clause_type": clause.clause_type, "path": clause.path,
+            "parent_id": clause.parent_id or "", "title": clause.title,
+            "text": clause.text, "table_id": clause.table_id or "",
+            "refs": refs, "effective_from": bundle.effective_from,
+            "effective_to": bundle.effective_to or "", "embedding": list(vector),
+        })
+    clause_store.ensure_collection()
+    clause_store.upsert(rows)
+    return len(rows)
+```
 
 `knowledge/memory.py`：
 
@@ -2644,13 +3017,15 @@ class MemoryStore:
             "confidence=excluded.confidence, updated_at=excluded.updated_at",
             (memory.memory_id, memory.tenant_id, memory.user_id, memory.kind, memory.key,
              memory.value, memory.confidence, memory.source_task_id,
-             memory.updated_at.isoformat(), memory.expires_at.isoformat() if memory.expires_at else None),
+             memory.updated_at.isoformat(),
+             memory.expires_at.isoformat() if memory.expires_at else None),
         )
 
     async def get(self, tenant_id: str, user_id: str, kinds: list[str]) -> list[UserMemory]:
         placeholders = ",".join("?" for _ in kinds)
         rows = await self.db.fetchall(
-            f"SELECT * FROM user_memories WHERE tenant_id = ? AND user_id = ? AND kind IN ({placeholders})",
+            f"SELECT * FROM user_memories WHERE tenant_id = ? AND user_id = ? "
+            f"AND kind IN ({placeholders})",
             (tenant_id, user_id, *kinds),
         )
         return [UserMemory(
@@ -2661,218 +3036,350 @@ class MemoryStore:
             expires_at=datetime.fromisoformat(r["expires_at"]) if r["expires_at"] else None,
         ) for r in rows]
 
-    async def append_message(self, session_id: str, task_id: str | None, role: str, content: str) -> None:
+    async def append_message(self, session_id: str, task_id: str | None,
+                             role: str, content: str) -> None:
         await self.db.execute(
-            "INSERT INTO messages (session_id, task_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO messages (session_id, task_id, role, content, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
             (session_id, task_id, role, content, datetime.now(timezone.utc).isoformat()),
         )
 
     async def recent_messages(self, session_id: str, limit: int = 10) -> list[dict]:
         rows = await self.db.fetchall(
-            "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+            "SELECT role, content FROM messages WHERE session_id = ? "
+            "ORDER BY id DESC LIMIT ?",
             (session_id, limit),
         )
         return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 ```
 
-`knowledge/chunker.py`：
-
-```python
-from pathlib import Path
-
-import fitz
-
-
-def extract_text(pdf_path: Path) -> str:
-    doc = fitz.open(pdf_path)
-    return "\n".join(page.get_text() for page in doc)
-
-
-def chunk_text(text: str, size: int = 1200, overlap: int = 150) -> list[str]:
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + size
-        chunks.append(text[start:end])
-        if end >= len(text):
-            break
-        start = end - overlap
-    return chunks
-```
-
-`knowledge/ingest.py`：
-
-```python
-import hashlib
-from pathlib import Path
-
-from itinerary_agent.domain.models import CallContext
-from itinerary_agent.knowledge.chunker import chunk_text, extract_text
-
-
-async def ingest_pdf(tenant_id, doc_id, policy_version, path: Path,
-                     embedder, store, batch_size=20) -> int:
-    store.ensure_collection()
-    chunks = chunk_text(extract_text(path))
-    call_ctx = CallContext(trace_id="ingest", tenant_id=tenant_id, purpose="embed")
-    vectors = await embedder.embed(call_ctx, chunks)
-    rows = []
-    for i, (text, vector) in enumerate(zip(chunks, vectors)):
-        chunk_id = hashlib.sha256(f"{doc_id}:{policy_version}:{i}:{text}".encode()).hexdigest()[:32]
-        rows.append({
-            "id": chunk_id, "tenant_id": tenant_id, "doc_id": doc_id,
-            "policy_version": policy_version, "section": "", "page": 0,
-            "text": text, "embedding": vector,
-            "effective_from": "", "effective_to": "", "metadata": {},
-        })
-    for i in range(0, len(rows), batch_size):
-        store.client.insert(collection_name=store.settings.milvus_collection,
-                            data=rows[i:i + batch_size])
-    return len(rows)
-```
-
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `uv run pytest tests/test_memory.py -v`
+Run: `uv run pytest tests/test_policy_structure.py tests/test_memory.py -v`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/itinerary_agent/knowledge tests/test_memory.py
-git commit -m "feat: add policy ingestion and memory store"
+git add src/itinerary_agent/knowledge tests/test_policy_structure.py tests/test_memory.py
+git commit -m "feat: add policy structure parsing and ingestion"
 ```
 
 ---
 
-### Task 17：把真实模型与知识接入编排
+### Task 17：混合检索、图扩展与 context pack
 
 **Files:**
-- Modify: `src/itinerary_agent/infra/container.py`
-- Modify: `src/itinerary_agent/orchestration/nodes/plan.py`
-- Modify: `src/itinerary_agent/orchestration/nodes/respond.py`
-- Test: `tests/test_graph_with_knowledge.py`
+- Create: `src/itinerary_agent/knowledge/retrieval.py`
+- Create: `src/itinerary_agent/knowledge/service.py`
+- Test: `tests/test_policy_retrieval.py`
 
 - [ ] **Step 1: 写失败测试**
 
 ```python
-# tests/test_graph_with_knowledge.py
-from itinerary_agent.domain.models import PolicySnippet
+# tests/test_policy_retrieval.py
+from itinerary_agent.domain.models import PolicyClause, PolicyTable
+from itinerary_agent.infra.db import Database
+from itinerary_agent.knowledge.policy_store import PolicyStore
+from itinerary_agent.knowledge.service import KnowledgeService
 
 
-class FakeKnowledge:
-    async def search_policy(self, ctx, query, top_k=5):
-        return [PolicySnippet(ref="c1", text="住宿标准 500 元", section="住宿标准",
-                              page=3, policy_version="2026.1")]
+class FakeEmbedder:
+    async def embed(self, ctx, texts):
+        return [[0.1] * 1024 for _ in texts]
 
 
-async def test_plan_includes_policy_refs():
-    from tests.fakes import ScriptedDeps
-    from langgraph.checkpoint.memory import MemorySaver
+class FakeDenseStore:
+    def __init__(self, clause_ids):
+        self.clause_ids = clause_ids
 
-    deps = ScriptedDeps(checkpointer=MemorySaver())
-    deps.knowledge = FakeKnowledge()
-    service = deps.build_service()
-    ctx = type("Ctx", (), {"trace_id": "t", "tenant_id": "demo-company", "user_id": "u001",
-                           "session_id": "s", "roles": []})()
-    events = [e async for e in service.start_turn(ctx, "去北京出差")]
-    final = await service.graph.aget_state({"configurable": {"thread_id": events[0].data["task_id"]}})
-    assert final.values["policy_refs"] == ["c1"]
+    def search(self, tenant_id, policy_version, vector, limit=10):
+        return [{"clause_id": cid, "score": 1.0} for cid in self.clause_ids[:limit]]
+
+
+async def test_context_pack_expands_references_and_table(tmp_path):
+    db = Database(tmp_path / "r.db")
+    await db.connect()
+    store = PolicyStore(db)
+    await store.init()
+    for cid, text, refs, table_id in [
+        ("c1", "一线城市住宿上限 500 元，具体见附表二。", ["c2"], "t1"),
+        ("c2", "附表二给出各职级标准。", [], "t1"),
+        ("c3", "紧急会议可特批。", [], None),
+    ]:
+        await store.upsert_clause({
+            "clause_id": cid, "tenant_id": "demo-company", "doc_id": "travel-policy",
+            "parent_id": None, "path": f"travel-policy/{cid}", "clause_type": "clause",
+            "title": cid, "text": text, "table_id": table_id,
+            "policy_version": "2026.1", "effective_from": "2026-01-01",
+            "effective_to": None, "order_no": int(cid[1:]),
+        })
+    await store.add_edge("c1", "references", "c2")
+    await store.add_edge("c1", "exception_to", "c3")
+    await store.upsert_table(PolicyTable(table_id="t1", source_clause_id="c1",
+                                         columns=["职级", "上限"],
+                                         rows=[{"职级": "L2", "上限": 500}]))
+
+    service = KnowledgeService(
+        embedder=FakeEmbedder(), policy_store=store,
+        dense_store=FakeDenseStore(["c1"]), policy_version="2026.1",
+        seed_top_k=8, graph_hops=1, max_expanded_clauses=20,
+    )
+    ctx = type("Ctx", (), {"trace_id": "t", "tenant_id": "demo-company"})()
+    result = await service.search_policy(ctx, "一线城市住宿")
+
+    ids = [c.clause_id for c in result.clauses]
+    assert "c1" in ids and "c2" in ids and "c3" in ids
+    assert result.tables[0].table_id == "t1"
+    assert result.insufficient is False
+
+
+async def test_insufficient_when_no_hits(tmp_path):
+    db = Database(tmp_path / "r2.db")
+    await db.connect()
+    store = PolicyStore(db)
+    await store.init()
+    service = KnowledgeService(
+        embedder=FakeEmbedder(), policy_store=store,
+        dense_store=FakeDenseStore([]), policy_version="2026.1",
+        seed_top_k=8, graph_hops=1, max_expanded_clauses=20,
+    )
+    ctx = type("Ctx", (), {"trace_id": "t", "tenant_id": "demo-company"})()
+    result = await service.search_policy(ctx, "私人行程能否报销")
+    assert result.insufficient is True
+    await db.close()
+
+
+async def test_insufficient_when_table_missing(tmp_path):
+    db = Database(tmp_path / "r3.db")
+    await db.connect()
+    store = PolicyStore(db)
+    await store.init()
+    await store.upsert_clause({
+        "clause_id": "c1", "tenant_id": "demo-company", "doc_id": "travel-policy",
+        "parent_id": None, "path": "travel-policy/c1", "clause_type": "clause",
+        "title": "住宿标准", "text": "具体见附表二。", "table_id": "missing",
+        "policy_version": "2026.1", "effective_from": "2026-01-01",
+        "effective_to": None, "order_no": 1,
+    })
+    service = KnowledgeService(
+        embedder=FakeEmbedder(), policy_store=store,
+        dense_store=FakeDenseStore(["c1"]), policy_version="2026.1",
+        seed_top_k=8, graph_hops=1, max_expanded_clauses=20,
+    )
+    ctx = type("Ctx", (), {"trace_id": "t", "tenant_id": "demo-company"})()
+    result = await service.search_policy(ctx, "住宿标准")
+    assert result.insufficient is True
+    await db.close()
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `uv run pytest tests/test_graph_with_knowledge.py -v`
-Expected: FAIL — `policy_refs` 为空
+Run: `uv run pytest tests/test_policy_retrieval.py -v`
+Expected: FAIL — module not found
 
 - [ ] **Step 3: 写实现**
 
-`plan.py` 完整实现：
+`knowledge/retrieval.py`：
 
 ```python
-import json
+CITY_TIERS = {
+    "北京": 1, "上海": 1, "广州": 1, "深圳": 1,
+    "杭州": 2, "成都": 2, "武汉": 2, "南京": 2,
+}
 
-from itinerary_agent.domain.models import CallContext
 
-SYSTEM = "根据差旅需求生成执行步骤。只输出 {\"steps\": [\"...\"]}。"
-
-
-async def plan(state: dict, deps) -> dict:
-    refs = []
-    if deps.knowledge is not None:
-        snippets = await deps.knowledge.search_policy(deps.ctx_of(state), "差旅住宿与机票标准")
-        refs = [s.ref for s in snippets]
-    ctx = CallContext(trace_id=state["trace_id"], tenant_id=state["tenant_id"],
-                      task_id=state["task_id"], purpose="plan")
-    async with deps.span("orchestration.node.plan", "orchestration"):
-        messages = [
-            {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": json.dumps(state["request"], ensure_ascii=False)},
-        ]
-        completion = await deps.model.complete(ctx, messages, deps.tier_reasoning)
-    steps = json.loads(completion.text).get("steps", [])
-    return {"plan": steps, "status": "EXECUTING", "policy_refs": refs}
+def rrf_fuse(keyword_ids: list[str], dense_ids: list[str], k: int = 60) -> list[str]:
+    scores: dict[str, float] = {}
+    for rank, cid in enumerate(keyword_ids, start=1):
+        scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank)
+    for rank, cid in enumerate(dense_ids, start=1):
+        scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank)
+    return [cid for cid, _ in sorted(scores.items(), key=lambda item: item[1], reverse=True)]
 ```
 
-`container.py` 在 `start()` 中根据 `settings.model_mode` 选择模型：
+`knowledge/service.py`：
 
 ```python
-if self.settings.model_mode == "live":
-    from itinerary_agent.model_gateway.gateway import OpenAIChatGateway
-    self.model = OpenAIChatGateway(self.settings)
-else:
-    from itinerary_agent.adapters.scripted_model import ScriptedModelGateway
-    self.model = ScriptedModelGateway([])
+from itinerary_agent.domain.models import (CallContext, PolicyClause, PolicyContext,
+                                           PolicyTable)
+from itinerary_agent.knowledge.retrieval import CITY_TIERS, rrf_fuse
+
+
+def _row_matches(row: dict, filters) -> bool:
+    if filters is None:
+        return True
+    level = row.get("职级")
+    if filters.employee_level and level and level != filters.employee_level:
+        return False
+    city = row.get("城市")
+    if filters.city_tier is not None and city:
+        if CITY_TIERS.get(city) != filters.city_tier:
+            return False
+    return True
+
+
+class KnowledgeService:
+    def __init__(self, embedder, policy_store, dense_store, policy_version: str,
+                 seed_top_k: int = 8, graph_hops: int = 2, max_expanded_clauses: int = 20):
+        self.embedder = embedder
+        self.policy_store = policy_store
+        self.dense_store = dense_store
+        self.policy_version = policy_version
+        self.seed_top_k = seed_top_k
+        self.graph_hops = graph_hops
+        self.max_expanded_clauses = max_expanded_clauses
+
+    async def search_policy(self, ctx, query: str, filters=None) -> PolicyContext:
+        try:
+            call_ctx = CallContext(trace_id=ctx.trace_id, tenant_id=ctx.tenant_id,
+                                   purpose="embed")
+            vector = (await self.embedder.embed(call_ctx, [query]))[0]
+            dense = self.dense_store.search(ctx.tenant_id, self.policy_version, vector, 10)
+            try:
+                keyword = await self.policy_store.keyword_search(
+                    ctx.tenant_id, self.policy_version, query, 10
+                )
+            except Exception:
+                keyword = []
+            seed_ids = rrf_fuse(
+                [h["clause_id"] for h in keyword],
+                [h["clause_id"] for h in dense],
+            )[: self.seed_top_k]
+            if not seed_ids:
+                return PolicyContext(clauses=[], tables=[], citations=[],
+                                     policy_version=self.policy_version,
+                                     insufficient=True,
+                                     trace={"reason": "no_seed"})
+            clauses = await self.policy_store.expand(seed_ids, hops=self.graph_hops)
+            clauses = clauses[: self.max_expanded_clauses]
+            tables: list[PolicyTable] = []
+            missing_table = False
+            for clause in clauses:
+                if not clause.get("table_id"):
+                    continue
+                table = await self.policy_store.get_table(clause["table_id"])
+                if table is None:
+                    missing_table = True
+                    continue
+                if filters is not None:
+                    rows = [row for row in table.rows if _row_matches(row, filters)]
+                    if not rows:
+                        missing_table = True
+                        continue
+                    table = table.model_copy(update={"rows": rows})
+                if table.table_id not in {t.table_id for t in tables}:
+                    tables.append(table)
+            insufficient = missing_table
+            return PolicyContext(
+                clauses=[PolicyClause(
+                    clause_id=c["clause_id"], path=c["path"], title=c["title"],
+                    text=c["text"], clause_type=c["clause_type"],
+                    policy_version=c["policy_version"], table_id=c.get("table_id"),
+                    refs=c.get("refs", []),
+                ) for c in clauses],
+                tables=tables,
+                citations=[c["clause_id"] for c in clauses],
+                policy_version=self.policy_version,
+                insufficient=insufficient,
+                trace={"seed_count": len(seed_ids), "expanded_count": len(clauses),
+                       "missing_table": missing_table},
+            )
+        except Exception:
+            return PolicyContext(clauses=[], tables=[], citations=[],
+                                 policy_version=self.policy_version,
+                                 degraded=True, insufficient=True)
 ```
 
-同时按 `model_mode` 构造知识服务；`live` 时使用 `DashScopeEmbedder` 与 `MilvusPolicyStore`，否则 `None`。
-
-短期记忆接入：
+接入编排：
 
 ```python
-# container.start()
-from itinerary_agent.knowledge.memory import MemoryStore
-self.memory = MemoryStore(self.db)
+# infra/container.py 的 start()
+from itinerary_agent.knowledge.milvus_store import MilvusClauseStore
+from itinerary_agent.knowledge.policy_store import PolicyStore
+from itinerary_agent.knowledge.service import KnowledgeService
+from itinerary_agent.model_gateway.embeddings import DashScopeEmbedder
 
-# build_orchestrator 传入 memory=self.memory
-# OrchestrationService.__init__ 增加 memory=None，并保存 self.memory
-# understand 节点在构造 messages 时加入最近对话：
-recent = []
-if deps.memory is not None:
-    recent = await deps.memory.recent_messages(state["session_id"], limit=6)
-messages = recent + [
-    {"role": "system", "content": SYSTEM},
-    {"role": "user", "content": state["request"].get("raw_message", "")},
-]
-# start_turn 开头写入用户消息：
-if self.memory is not None:
-    await self.memory.append_message(state["session_id"], state["task_id"], "user", message)
+self.policy_store = PolicyStore(self.db)
+await self.policy_store.init()
+self.knowledge = KnowledgeService(
+    embedder=DashScopeEmbedder(self.settings),
+    policy_store=self.policy_store,
+    dense_store=MilvusClauseStore(self.settings),
+    policy_version=self.settings.policy_version,
+    seed_top_k=self.settings.policy_seed_top_k,
+    graph_hops=self.settings.policy_graph_hops,
+    max_expanded_clauses=self.settings.policy_max_expanded_clauses,
+)
+# build_orchestrator 传入 knowledge=self.knowledge
+```
+
+`orchestration/nodes/plan.py` 改为读取 context pack：
+
+```python
+context = await deps.knowledge.search_policy(
+    deps.ctx_of(state), "差旅住宿与机票标准"
+)
+refs = [clause.clause_id for clause in context.clauses]
+```
+
+测试补充：
+
+```python
+# tests/test_policy_retrieval.py
+from itinerary_agent.domain.models import PolicyClause, PolicyContext
+
+
+class FakeKnowledge:
+    async def search_policy(self, ctx, query, filters=None):
+        return PolicyContext(
+            clauses=[PolicyClause(clause_id="c1", path="p/c1", title="住宿标准",
+                                  text="上限 500", clause_type="clause",
+                                  policy_version="2026.1")],
+            tables=[], citations=["c1"], policy_version="2026.1",
+        )
+
+
+async def test_plan_uses_context_refs():
+    from langgraph.checkpoint.memory import MemorySaver
+    from tests.fakes import ScriptedDeps
+
+    deps = ScriptedDeps(checkpointer=MemorySaver())
+    deps.knowledge = FakeKnowledge()
+    service = deps.build_service()
+    ctx = type("Ctx", (), {"trace_id": "t", "tenant_id": "demo-company",
+                           "user_id": "u001", "session_id": "s", "roles": []})()
+    events = [e async for e in service.start_turn(ctx, "去北京出差")]
+    state = await service.graph.aget_state(
+        {"configurable": {"thread_id": events[0].data["task_id"]}}
+    )
+    assert state.values["policy_refs"] == ["c1"]
 ```
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `uv run pytest tests/test_graph_with_knowledge.py -v`
+Run: `uv run pytest tests/test_policy_retrieval.py -v`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/itinerary_agent/infra/container.py src/itinerary_agent/orchestration/nodes/plan.py tests/test_graph_with_knowledge.py
-git commit -m "feat: wire knowledge into planning"
+git add src/itinerary_agent/knowledge/retrieval.py src/itinerary_agent/knowledge/service.py tests/test_policy_retrieval.py
+git commit -m "feat: add hybrid policy retrieval and context pack"
 ```
 
 ---
 
-## M4：控制层、审批与下单
-
-### Task 18：差标规则与求值
+### Task 18：差标规则编译与求值
 
 **Files:**
 - Create: `config/policies/demo-company.yaml`
 - Create: `src/itinerary_agent/control/__init__.py`
 - Create: `src/itinerary_agent/control/rules.py`
+- Create: `src/itinerary_agent/control/rules_compiler.py`
 - Create: `src/itinerary_agent/control/policy.py`
 - Test: `tests/test_policy.py`
+- Test: `tests/test_rule_compiler.py`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -2897,11 +3404,62 @@ def test_over_budget_hotel_requires_approval():
     result = check_policy(TripRequest(destination_city="北京"), options, user, rules)
     assert result.passed is False
     assert result.requires_approval is True
+
+
+def test_no_matching_rule_uses_defaults():
+    rules = PolicyRules(version="2026.1", tenant_id="demo-company",
+                        defaults={"hotel": {"max_price_per_night": 600}}, rules=[])
+    user = UserProfile(user_id="u", tenant_id="demo-company", name="A",
+                       employee_level="L9", department="D", city="上海")
+    options = SearchResults(hotels=[HotelOption(
+        option_id="h1", hotel_name="H", city="北京", area="王府井",
+        room_type="大床", price_per_night=800, refundable=True,
+        distance_to_center_km=1.0,
+    )])
+    result = check_policy(TripRequest(destination_city="北京"), options, user, rules)
+    assert result.passed is False
+    assert result.violations[0].rule_id == "default-hotel"
+
+
+def test_city_tier_filter_excludes_rule():
+    rules = PolicyRules(
+        version="2026.1", tenant_id="demo-company",
+        defaults={"hotel": {"max_price_per_night": 1000}},
+        rules=[Rule(id="hotel-tier1", match={"employee_level": ["L2"], "city_tier": [1]},
+                    category="hotel", limit=500, severity="block")],
+    )
+    user = UserProfile(user_id="u", tenant_id="demo-company", name="A",
+                       employee_level="L2", department="D", city="上海")
+    options = SearchResults(hotels=[HotelOption(
+        option_id="h1", hotel_name="H", city="成都", area="春熙路",
+        room_type="大床", price_per_night=800, refundable=True,
+        distance_to_center_km=1.0,
+    )])
+    result = check_policy(TripRequest(destination_city="成都"), options, user, rules)
+    assert result.passed is True
+    assert all(v.rule_id != "hotel-tier1" for v in result.violations)
+
+
+# tests/test_rule_compiler.py
+from itinerary_agent.control.rules_compiler import compile_rules_from_table
+from itinerary_agent.domain.models import PolicyTable
+
+
+def test_compile_rules_from_policy_table():
+    table = PolicyTable(
+        table_id="t1", source_clause_id="c1",
+        columns=["职级", "城市", "上限"],
+        rows=[{"职级": "L2", "城市": "一线", "上限": 500}],
+    )
+    rules = compile_rules_from_table(table, "demo-company", "2026.1", "2026-01-01")
+    assert rules.rules[0].limit == 500
+    assert rules.rules[0].source_clause_id == "c1"
+    assert rules.rules[0].match["employee_level"] == ["L2"]
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `uv run pytest tests/test_policy.py -v`
+Run: `uv run pytest tests/test_policy.py tests/test_rule_compiler.py -v`
 Expected: FAIL — module not found
 
 - [ ] **Step 3: 写实现**
@@ -2923,6 +3481,10 @@ class Rule(BaseModel):
     constraint: dict = Field(default_factory=dict)
     severity: str = "warn"
     allow_approval: bool = False
+    source_clause_id: str | None = None
+    policy_version: str | None = None
+    effective_from: str | None = None
+    effective_to: str | None = None
 
 
 class PolicyRules(BaseModel):
@@ -2936,6 +3498,40 @@ def load_rules(path: Path) -> PolicyRules:
     return PolicyRules.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
 ```
 
+`control/rules_compiler.py`：
+
+```python
+from itinerary_agent.control.rules import PolicyRules, Rule
+from itinerary_agent.domain.models import PolicyTable
+
+CITY_TIER = {"一线": 1, "二线": 2, "三线": 3}
+
+
+def compile_rules_from_table(table: PolicyTable, tenant_id: str,
+                             policy_version: str,
+                             effective_from: str | None = None) -> PolicyRules:
+    rules: list[Rule] = []
+    for index, row in enumerate(table.rows):
+        level = row.get("职级")
+        city = row.get("城市")
+        limit = row.get("上限")
+        if level is None or limit is None:
+            continue
+        rules.append(Rule(
+            id=f"{table.table_id}-{index}",
+            match={"employee_level": [level],
+                   "city_tier": [CITY_TIER.get(city, 0)]},
+            category="hotel",
+            limit=float(limit),
+            severity="block",
+            allow_approval=True,
+            source_clause_id=table.source_clause_id,
+            policy_version=policy_version,
+            effective_from=effective_from,
+        ))
+    return PolicyRules(version=policy_version, tenant_id=tenant_id, rules=rules)
+```
+
 `control/policy.py`：
 
 ```python
@@ -2944,9 +3540,33 @@ from itinerary_agent.domain.models import (PolicyResult, SearchResults, TripRequ
                                           UserProfile, Violation)
 
 
+CITY_TIERS = {
+    "北京": 1, "上海": 1, "广州": 1, "深圳": 1,
+    "杭州": 2, "成都": 2, "武汉": 2, "南京": 2,
+}
+
+
+def _city_tier(city: str | None) -> int:
+    return CITY_TIERS.get(city or "", 3)
+
+
+def _is_effective(rule, request: TripRequest) -> bool:
+    date = request.start_date or ""
+    if rule.effective_from and date and date < rule.effective_from:
+        return False
+    if rule.effective_to and date and date > rule.effective_to:
+        return False
+    return True
+
+
 def _matches(rule, user: UserProfile, request: TripRequest) -> bool:
     levels = rule.match.get("employee_level")
-    return not levels or user.employee_level in levels
+    if levels and user.employee_level not in levels:
+        return False
+    tiers = rule.match.get("city_tier")
+    if tiers and _city_tier(request.destination_city) not in tiers:
+        return False
+    return _is_effective(rule, request)
 
 
 def check_policy(request: TripRequest, options: SearchResults,
@@ -2961,6 +3581,7 @@ def check_policy(request: TripRequest, options: SearchResults,
                     rule_id=rule.id, category="hotel", severity=rule.severity,
                     message=f"{hotel.hotel_name} 每晚 {hotel.price_per_night} 超过标准 {rule.limit}",
                     limit=rule.limit, actual=hotel.price_per_night,
+                    source_clause_id=rule.source_clause_id,
                 ))
                 requires_approval = requires_approval or rule.allow_approval
 
@@ -2972,6 +3593,7 @@ def check_policy(request: TripRequest, options: SearchResults,
                     rule_id=rule.id, category="flight", severity=rule.severity,
                     message=f"{flight.flight_no} 票价 {flight.price} 超过标准 {rule.limit}",
                     limit=rule.limit, actual=flight.price,
+                    source_clause_id=rule.source_clause_id,
                 ))
                 requires_approval = requires_approval or rule.allow_approval
             allowed_cabins = rule.constraint.get("cabin", [])
@@ -2979,8 +3601,41 @@ def check_policy(request: TripRequest, options: SearchResults,
                 violations.append(Violation(
                     rule_id=rule.id, category="flight", severity=rule.severity,
                     message=f"{flight.flight_no} 舱位 {flight.cabin} 不符合标准",
+                    source_clause_id=rule.source_clause_id,
                 ))
                 requires_approval = requires_approval or rule.allow_approval
+
+    if not hotel_rules and options.hotels:
+        default_limit = rules.defaults.get("hotel", {}).get("max_price_per_night")
+        if default_limit is None:
+            violations.append(Violation(
+                rule_id="default-hotel", category="hotel", severity="block",
+                message="无适用住宿标准，按制度要求拒绝",
+            ))
+        else:
+            for hotel in options.hotels:
+                if hotel.price_per_night > default_limit:
+                    violations.append(Violation(
+                        rule_id="default-hotel", category="hotel", severity="block",
+                        message=f"{hotel.hotel_name} 超过默认住宿标准 {default_limit}",
+                        limit=default_limit, actual=hotel.price_per_night,
+                    ))
+
+    if not flight_rules and options.flights:
+        default_limit = rules.defaults.get("flight", {}).get("max_price")
+        if default_limit is None:
+            violations.append(Violation(
+                rule_id="default-flight", category="flight", severity="block",
+                message="无适用机票标准，按制度要求拒绝",
+            ))
+        else:
+            for flight in options.flights:
+                if flight.price > default_limit:
+                    violations.append(Violation(
+                        rule_id="default-flight", category="flight", severity="block",
+                        message=f"{flight.flight_no} 超过默认机票标准 {default_limit}",
+                        limit=default_limit, actual=flight.price,
+                    ))
 
     passed = not any(v.severity == "block" for v in violations)
     return PolicyResult(passed=passed, requires_approval=requires_approval,
@@ -3002,30 +3657,33 @@ rules:
     limit: 500
     severity: block
     allow_approval: true
+    source_clause_id: travel-policy/ch3/art12
   - id: hotel-standard-L3
     match: { employee_level: ["L3"] }
     category: hotel
     limit: 700
     severity: warn
     allow_approval: false
+    source_clause_id: travel-policy/ch3/art12
   - id: flight-cabin-L1-L2
     match: { employee_level: ["L1", "L2"] }
     category: flight
     constraint: { cabin: ["economy"] }
     severity: warn
+    source_clause_id: travel-policy/ch2/art06
     allow_approval: false
 ```
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `uv run pytest tests/test_policy.py -v`
+Run: `uv run pytest tests/test_policy.py tests/test_rule_compiler.py -v`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add config/policies src/itinerary_agent/control tests/test_policy.py
-git commit -m "feat: add travel policy rules and evaluator"
+git add config/policies src/itinerary_agent/control tests/test_policy.py tests/test_rule_compiler.py
+git commit -m "feat: add travel policy rule compiler and evaluator"
 ```
 
 ---
@@ -3078,8 +3736,12 @@ from itinerary_agent.domain.models import (ApprovalStatus, GuardResult, TaskSnap
 def guard_action(action: str, snapshot: TaskSnapshot, roles: list[str]) -> GuardResult:
     if snapshot.status in {TaskStatus.CANCELLED, TaskStatus.FAILED, TaskStatus.COMPLETED}:
         return GuardResult(allowed=False, code="GUARD_DENIED", message="任务已结束")
-    if action.startswith("search_") or action in {"get_user_profile", "get_policy_rules"}:
+    read_tools = {"get_user_profile", "get_policy_rules", "get_visa_requirements",
+                  "get_approval_status"}
+    if action.startswith("search_") or action in read_tools:
         return GuardResult(allowed=True, code="OK", message="read allowed")
+    if action == "cancel_task":
+        return GuardResult(allowed=True, code="OK", message="cancel allowed")
     if action == "submit_approval":
         if not snapshot.policy_passed and not snapshot.requires_approval:
             return GuardResult(allowed=False, code="POLICY_BLOCKED", message="不可审批")
@@ -3125,6 +3787,27 @@ class AuditLog:
         )
 ```
 
+`tests/test_guard.py` 增加 ControlService 委托测试：
+
+```python
+from itinerary_agent.control.rules import PolicyRules
+from itinerary_agent.control.service import ControlService
+
+
+class _NoopAudit:
+    async def record(self, *args, **kwargs):
+        return None
+
+
+def test_control_service_delegates_policy_and_guard():
+    rules = PolicyRules(version="2026.1", tenant_id="demo-company", defaults={}, rules=[])
+    service = ControlService(rules, _NoopAudit())
+    snapshot = TaskSnapshot(task_id="t", status=TaskStatus.EXECUTING, revision=1,
+                            policy_passed=True, confirmed=False)
+    assert service.guard(type("Ctx", (), {"roles": ["employee"]})(), "book_flight", snapshot).code \
+        == "CONFIRMATION_REQUIRED"
+```
+
 `control/service.py`：
 
 ```python
@@ -3158,8 +3841,9 @@ Expected: PASS
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/itinerary_agent/control/guard.py src/itinerary_agent/control/audit.py tests/test_guard.py
-git commit -m "feat: add action guard and audit log"
+git add src/itinerary_agent/control/guard.py src/itinerary_agent/control/audit.py \
+        src/itinerary_agent/control/service.py tests/test_guard.py
+git commit -m "feat: add action guard, audit log and control service"
 ```
 
 ---
@@ -3242,6 +3926,11 @@ class MockApprovalSystem:
     async def _auto_approve(self, approval_id: str) -> None:
         await asyncio.sleep(self.delay)
         await self.decide(approval_id, "approved", "自动通过")
+
+    async def stop(self) -> None:
+        for task in list(self._tasks):
+            task.cancel()
+        self._tasks.clear()
 
     async def decide(self, approval_id: str, status: str, comment: str) -> None:
         await self.db.execute(
@@ -3334,8 +4023,14 @@ class ApprovalPoller:
                     action="continue",
                     approval_status=ApprovalStatus(row["status"]),
                 )
-                async for _ in self.orchestrator.resume(ctx, row["task_id"], decision):
-                    pass
+                try:
+                    async for _ in self.orchestrator.resume(ctx, row["task_id"], decision):
+                        pass
+                except Exception:
+                    await self.db.execute(
+                        "UPDATE tasks SET status = 'WAITING_APPROVAL' WHERE task_id = ?",
+                        (row["task_id"],),
+                    )
 ```
 
 - [ ] **Step 4: 运行测试确认通过**
@@ -3424,7 +4119,7 @@ async def policy_check(state: dict, deps) -> dict:
     request = TripRequest.model_validate(state["request"])
     options = SearchResults.model_validate(state["options"])
     profile = await deps.get_user_profile(state)
-    result: PolicyResult = deps.control.check_policy(request, options, profile, deps.rules)
+    result: PolicyResult = deps.control.check_policy(request, options, profile)
     await deps.audit.record(state["trace_id"], state["task_id"], state["user_id"],
                             "check_policy", state["options"],
                             [v.rule_id for v in result.violations], result.policy_version,
@@ -3553,7 +4248,7 @@ graph.add_conditional_edges("confirm", route_after_confirm,
 graph.add_edge("book", "respond")
 ```
 
-`infra/container.py` 在 `start()` 中完成 M4 装配（替换原来的最少装配）：
+`infra/container.py` 在 Task 17 的 `start()` 基础上**追加** M4 装配，保留 `policy_store` / `knowledge` 初始化，不要覆盖 M3 的装配：
 
 ```python
 from pathlib import Path
@@ -3595,12 +4290,14 @@ async def start(self):
 async def stop(self):
     if getattr(self, "poller", None) is not None:
         await self.poller.stop()
+    if getattr(self, "approvals", None) is not None:
+        await self.approvals.stop()
     await self.db.close()
     if self.conn is not None:
         await self.conn.close()
 ```
 
-`build_orchestrator` 传入 `rules=rules, audit=self.audit`。
+`build_orchestrator` 传入 `rules=self.rules, audit=self.audit`。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -3639,12 +4336,15 @@ def test_amendment_clears_downstream():
         "policy_result": {"passed": True}, "policy_refs": ["c1"],
         "approval": {"approval_id": "a1"}, "selected": {"flight_id": "f1"},
         "confirmed": True, "status": "EXECUTING",
+        "pending_human": {"type": "confirm_option"}, "error": {"code": "X"},
     }
     updated = apply_amendment(state, TripRequest(destination_city="上海"))
     assert updated["revision"] == 2
     assert updated["options"] == {"flights": [], "hotels": []}
     assert updated["approval"] is None
     assert updated["confirmed"] is False
+    assert updated["pending_human"] is None
+    assert updated["error"] is None
     assert updated["status"] == "PLANNING"
 ```
 
@@ -3670,6 +4370,8 @@ def apply_amendment(state: dict, request: TripRequest) -> dict:
         "selected": {},
         "confirmed": False,
         "pending_amendment": None,
+        "pending_human": None,
+        "error": None,
         "status": "PLANNING",
     }
 ```
@@ -3818,27 +4520,29 @@ async def trace_view(trace_id: str):
 ```python
 # api/routes.py：每次请求
 async with container.traces.span("gateway.http", "gateway", route="/chat"):
-    ...
+    pass
 
 # tools/service.py：每次工具调用
 async with self.traces.span(f"tool.{name}", "tools", tool_name=name,
                             side_effect=spec.side_effect, risk=spec.risk):
-    ...
+    pass
 
 # model_gateway/gateway.py：每次模型调用
 async with self.traces.span(f"model.{ctx.purpose}", "model",
                             model=model, prompt_version=ctx.prompt_version):
-    ...
+    pass
 
 # knowledge/service.py：每次检索
 async with self.traces.span("knowledge.search_policy", "knowledge",
-                            tenant_id=ctx.tenant_id, top_k=top_k):
-    ...
+                            tenant_id=ctx.tenant_id,
+                            seed_top_k=self.seed_top_k,
+                            graph_hops=self.graph_hops):
+    pass
 
 # control/service.py：每次差标/准入
 async with self.traces.span("control.check_policy", "control",
                             tenant_id=ctx.tenant_id):
-    ...
+    pass
 ```
 
 为支持上述埋点，`ToolService`、`OpenAIChatGateway`、`KnowledgeService`、`ControlService` 的构造函数都增加 `traces` 参数，由容器传入同一个 `TraceRecorder`。
@@ -3984,7 +4688,7 @@ git commit -m "feat: add minimal web page and admin approval"
 
 - [ ] **Step 1: 写场景测试**
 
-`tests/scenarios.py` 提供 `make_app(tmp_path, script)`：用 `ScriptedModelGateway`、mock 适配器、临时 SQLite 构造 app。`tests/test_scenarios.py` 覆盖：
+`tests/scenarios.py` 提供 `make_app(tmp_path, script)`：用 `ScriptedModelGateway`、mock 适配器、临时 SQLite 构造 app，并注入使用 `PolicyStore` fixture 的 `KnowledgeService`，以覆盖跨条款、例外、表格和版本场景。`tests/test_scenarios.py` 覆盖：
 
 ```python
 async def test_scenario_over_policy_then_approve(tmp_path):
@@ -4011,6 +4715,10 @@ async def test_scenario_over_policy_then_approve(tmp_path):
 | 暂停/恢复/取消 | `test_pause_resume_cancel` | pause 后 `PAUSED`；resume 回到原状态；cancel 为 `CANCELLED` |
 | 工具失败 / RAG 降级 | `test_tool_failure_and_rag_degraded` | 工具错误映射为 `TOOL_UNAVAILABLE`；知识返回空时主流程继续 |
 | 未审批下单 | `test_booking_without_approval_denied` | Guard 返回 `APPROVAL_REQUIRED`，`audit_log` 有记录 |
+| 跨条款 | `test_cross_clause_citation` | `PolicyContext` 含被引用条款，`citations` 同时包含主条款与引用条款 |
+| 例外条款 | `test_exception_clause_applied` | 例外条款被扩展进 context，回答/决策引用例外条款 |
+| 表格行 | `test_table_row_selection` | L2 + 一线城市取到上限 500 的行，不混用其他职级 |
+| 版本与无答案 | `test_policy_version_and_insufficient` | 只检索当前版本；无命中时 `insufficient=True` |
 
 - [ ] **Step 2: 写 import 边界测试**
 
