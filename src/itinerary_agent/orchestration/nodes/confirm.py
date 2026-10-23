@@ -18,7 +18,8 @@ async def confirm(state: dict, deps) -> dict:
     if state.get("pending_human"):
         message = state["pending_human"].get("message", message)
     policy = state.get("policy_result") or {}
-    if policy.get("passed") is False:
+    # pending_human（如审批驳回原因）优先于通用差标提示。
+    if not state.get("pending_human") and policy.get("passed") is False:
         message = "方案不符合差标，请修改预算/选项，或取消本次任务。"
 
     decision = interrupt(
