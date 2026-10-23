@@ -1,10 +1,11 @@
 """组合根：把配置、数据库和可观测组件装配在一起。
 
 只有这里允许知道具体实现；业务层通过接口拿依赖。
-M1 起增加编排服务的装配，M2/M3 会继续挂载 Checkpoint、工具、知识层。
+M0-M4 依次挂载基础设施、编排、工具、Checkpoint、制度检索、审批与下单。
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -34,6 +35,9 @@ class Container:
     rules: object | None = None
     audit: object | None = None
     policy_store: object | None = None
+    approvals: object | None = None
+    booking: object | None = None
+    poller: object | None = None
     conn: aiosqlite.Connection | None = None
 
     async def start(self) -> None:
@@ -43,19 +47,61 @@ class Container:
         if self.settings.model_mode == "live":
             await self._init_live_model_and_knowledge()
 
-        # 没有显式注入工具时，默认装配 mock 外部系统（M2）。
+        # 审批与下单是 mock 外部系统，先于工具注册创建。
+        if self.approvals is None:
+            from itinerary_agent.adapters.mock.approval import MockApprovalSystem
+
+            self.approvals = MockApprovalSystem(
+                self.db, self.settings.mock_approval_delay_seconds
+            )
+        if self.booking is None:
+            from itinerary_agent.adapters.mock.booking import MockBookingSystem
+
+            self.booking = MockBookingSystem(self.db)
+
+        # 没有显式注入工具时，默认装配 mock 外部系统。
         if self.tools is None:
             self.tools = self._default_tools()
+
+        # 控制层：规则、审计、动作准入。
+        if self.audit is None:
+            from itinerary_agent.control.audit import AuditLog
+
+            self.audit = AuditLog(self.db)
+        if self.rules is None:
+            from itinerary_agent.control.rules import load_rules
+
+            self.rules = load_rules(
+                Path(__file__).resolve().parents[3]
+                / "config/policies/demo-company.yaml"
+            )
+        if self.control is None:
+            from itinerary_agent.control.service import ControlService
+
+            self.control = ControlService(self.rules, self.audit)
+
         # M2 起使用 SQLite Checkpoint；测试可注入 MemorySaver 跳过持久化。
         if self.checkpointer is None:
             self.conn = await aiosqlite.connect(self.settings.sqlite_path)
             self.checkpointer = AsyncSqliteSaver(self.conn)
             await self.checkpointer.setup()
+
         # 没有显式注入 orchestrator 时，按当前依赖自动装配。
         if self.orchestrator is None:
             self.orchestrator = self.build_orchestrator()
 
+        # 审批结果轮询：从 Checkpoint 恢复 WAITING_APPROVAL 的任务。
+        if self.poller is None:
+            from itinerary_agent.orchestration.approval_poller import ApprovalPoller
+
+            self.poller = ApprovalPoller(self.db, self.approvals, self.orchestrator)
+            self.poller.start()
+
     async def stop(self) -> None:
+        if self.poller is not None:
+            await self.poller.stop()
+        if self.approvals is not None:
+            await self.approvals.stop()
         await self.db.close()
         if self.conn is not None:
             await self.conn.close()
@@ -87,10 +133,17 @@ class Container:
             )
 
     def _default_tools(self):
-        """M2 默认工具集：查询与用户信息，全部走 mock 适配器。"""
-        from itinerary_agent.adapters.mock.inventory import MockFlightInventory, MockHotelInventory
+        """默认工具集：查询、用户、审批、下单，全部走 mock 适配器。"""
+        from itinerary_agent.adapters.mock.inventory import (
+            MockFlightInventory,
+            MockHotelInventory,
+        )
         from itinerary_agent.adapters.mock.users import MockUserDirectory
-        from itinerary_agent.tools.builtin import build_builtin_registry
+        from itinerary_agent.tools.builtin import (
+            build_builtin_registry,
+            register_approval_tools,
+            register_booking_tools,
+        )
         from itinerary_agent.tools.registry import ToolRegistry
         from itinerary_agent.tools.service import ToolService
 
@@ -98,6 +151,8 @@ class Container:
             ToolRegistry(), MockFlightInventory(), MockHotelInventory(),
             MockUserDirectory(),
         )
+        register_approval_tools(registry, self.approvals)
+        register_booking_tools(registry, self.booking)
         return ToolService(registry)
 
     def build_orchestrator(self):

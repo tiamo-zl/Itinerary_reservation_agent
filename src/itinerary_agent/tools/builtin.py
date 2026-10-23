@@ -81,6 +81,55 @@ GET_APPROVAL = ToolSpec(
 )
 
 
+BOOK_FLIGHT = ToolSpec(
+    name="book_flight",
+    description="预订机票",
+    side_effect="write",
+    risk="high",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "option_id": {"type": "string"},
+            "idempotency_key": {"type": "string"},
+        },
+        "required": ["option_id", "idempotency_key"],
+    },
+    output_schema={"type": "object"},
+)
+
+BOOK_HOTEL = ToolSpec(
+    name="book_hotel",
+    description="预订酒店",
+    side_effect="write",
+    risk="high",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "option_id": {"type": "string"},
+            "idempotency_key": {"type": "string"},
+        },
+        "required": ["option_id", "idempotency_key"],
+    },
+    output_schema={"type": "object"},
+)
+
+
+def register_booking_tools(registry, booking):
+    async def book_flight(ctx, args):
+        return await booking.book(
+            "book_flight", args["idempotency_key"], args
+        )
+
+    async def book_hotel(ctx, args):
+        return await booking.book(
+            "book_hotel", args["idempotency_key"], args
+        )
+
+    registry.register(BOOK_FLIGHT, book_flight)
+    registry.register(BOOK_HOTEL, book_hotel)
+    return registry
+
+
 def register_approval_tools(registry, approvals):
     """注册审批相关工具；审批系统由适配器注入。"""
 
