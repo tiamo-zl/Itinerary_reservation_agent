@@ -191,6 +191,11 @@ class OrchestrationService:
         from langgraph.types import Command
 
         config = {"configurable": {"thread_id": task_id}}
+        if decision.action == "pause":
+            # 暂停不销毁现场；后续 continue 仍从同一个 interrupt 恢复。
+            await self._set_task_status(task_id, "PAUSED")
+            yield Event(type="result", data={"task_id": task_id, "status": "PAUSED"})
+            return
         if decision.action == "cancel":
             await self._set_task_status(task_id, "CANCELLED")
             yield Event(type="result", data={"task_id": task_id, "status": "CANCELLED"})

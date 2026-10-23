@@ -5,7 +5,7 @@
 """
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -19,6 +19,10 @@ from itinerary_agent.observability.query import load_trace_tree
 class ChatRequest(BaseModel):
     message: str
     session_id: str = "default-session"
+
+
+class AdminDecision(BaseModel):
+    comment: str = ""
 
 
 def build_router(container) -> APIRouter:
@@ -65,6 +69,34 @@ def build_router(container) -> APIRouter:
             (task_id,),
         )
         return dict(row) if row else {"error": "not found"}
+
+    @router.post("/admin/approvals/{approval_id}/approve")
+    async def approve(approval_id: str, payload: AdminDecision, request: Request):
+        ctx = build_context(request)
+        if "admin" not in ctx.roles and "approver" not in ctx.roles:
+            return JSONResponse(status_code=403, content={"error": "forbidden"})
+        row = await container.db.fetchone(
+            "SELECT approval_id FROM approvals WHERE approval_id = ?",
+            (approval_id,),
+        )
+        if row is None:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        await container.approvals.decide(approval_id, "approved", payload.comment)
+        return {"ok": True}
+
+    @router.post("/admin/approvals/{approval_id}/reject")
+    async def reject(approval_id: str, payload: AdminDecision, request: Request):
+        ctx = build_context(request)
+        if "admin" not in ctx.roles and "approver" not in ctx.roles:
+            return JSONResponse(status_code=403, content={"error": "forbidden"})
+        row = await container.db.fetchone(
+            "SELECT approval_id FROM approvals WHERE approval_id = ?",
+            (approval_id,),
+        )
+        if row is None:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        await container.approvals.decide(approval_id, "rejected", payload.comment)
+        return {"ok": True}
 
     @router.get("/traces/{trace_id}")
     async def trace_json(trace_id: str):

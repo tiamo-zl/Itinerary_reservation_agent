@@ -5,8 +5,10 @@
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 
 from itinerary_agent.api.routes import build_router
 from itinerary_agent.infra.container import Container
@@ -32,6 +34,11 @@ def create_app(container: Container) -> FastAPI:
     async def health():
         # M0 只返回进程级健康；M3 起会扩展为检查 Milvus/模型配置。
         return {"status": "ok", "env": container.settings.env}
+
+    @app.get("/")
+    async def index():
+        # 最小 Web 聊天页；生产会替换成正式前端。
+        return FileResponse(Path(__file__).parent / "static" / "chat.html")
 
     # /chat 与 /tasks/*：SSE 流式入口和任务查询。
     app.include_router(build_router(container))
