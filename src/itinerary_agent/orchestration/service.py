@@ -168,6 +168,10 @@ class OrchestrationService:
         from langgraph.types import Command
 
         config = {"configurable": {"thread_id": task_id}}
+        if decision.action == "cancel":
+            await self._set_task_status(task_id, "CANCELLED")
+            yield Event(type="result", data={"task_id": task_id, "status": "CANCELLED"})
+            return
         payload = decision.model_dump()
         if decision.approval_status is not None:
             # 审批轮询只传 approval_status；节点需要的是简单 status 字段。

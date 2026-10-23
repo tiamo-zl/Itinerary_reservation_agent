@@ -6,6 +6,9 @@ M1 起增加编排服务的装配，M2/M3 会继续挂载 Checkpoint、工具、
 
 from dataclasses import dataclass
 
+import aiosqlite
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
 from itinerary_agent.infra.config import Settings
 from itinerary_agent.infra.db import Database
 from itinerary_agent.observability.tracing import TraceRecorder
@@ -30,18 +33,27 @@ class Container:
     checkpointer: object | None = None
     rules: object | None = None
     audit: object | None = None
+    conn: aiosqlite.Connection | None = None
 
     async def start(self) -> None:
         await self.db.connect()
         # 没有显式注入工具时，默认装配 mock 外部系统（M2）。
         if self.tools is None:
             self.tools = self._default_tools()
+        # M2 起使用 SQLite Checkpoint；测试可注入 MemorySaver 跳过持久化。
+        if self.checkpointer is None:
+            self.conn = await aiosqlite.connect(self.settings.sqlite_path)
+            self.checkpointer = AsyncSqliteSaver(self.conn)
+            await self.checkpointer.setup()
         # 没有显式注入 orchestrator 时，按当前依赖自动装配。
         if self.orchestrator is None:
             self.orchestrator = self.build_orchestrator()
 
     async def stop(self) -> None:
         await self.db.close()
+        if self.conn is not None:
+            await self.conn.close()
+            self.conn = None
 
     def _default_tools(self):
         """M2 默认工具集：查询与用户信息，全部走 mock 适配器。"""
