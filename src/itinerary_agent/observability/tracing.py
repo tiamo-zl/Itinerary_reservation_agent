@@ -4,7 +4,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from time import perf_counter
 from uuid import uuid4
 
@@ -34,7 +34,7 @@ class TraceRecorder:
         trace_id = _current_trace.get() or self.start_trace()
         span_id = uuid4().hex
         parent_id = _current_span.get()
-        started_at = datetime.now(timezone.utc)
+        started_at = datetime.now(UTC)
         started = perf_counter()
         token = _current_span.set(span_id)
         status = "ok"
