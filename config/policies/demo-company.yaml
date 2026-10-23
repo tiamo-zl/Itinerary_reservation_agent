@@ -1,0 +1,26 @@
+version: "2026.1"
+tenant_id: demo-company
+defaults:
+  flight: { cabin: economy, max_price: 2000 }
+  hotel: { max_price_per_night: 600 }
+rules:
+  - id: hotel-standard-L1-L2
+    match: { employee_level: ["L1", "L2"] }
+    category: hotel
+    limit: 500
+    severity: block
+    allow_approval: true
+    source_clause_id: travel-policy/ch3/art12
+  - id: hotel-standard-L3
+    match: { employee_level: ["L3"] }
+    category: hotel
+    limit: 700
+    severity: warn
+    allow_approval: false
+    source_clause_id: travel-policy/ch3/art12
+  - id: flight-cabin-L1-L2
+    match: { employee_level: ["L1", "L2"] }
+    category: flight
+    constraint: { cabin: ["economy"] }
+    severity: warn
+    source_clause_id: travel-policy/ch2/art06
