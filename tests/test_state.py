@@ -2,6 +2,7 @@ from itinerary_agent.domain.models import GuardResult, PolicyResult, TaskStatus,
 
 
 def test_trip_request_defaults():
+    # 未显式指定时，默认同时需要机票和酒店。
     r = TripRequest(destination_city="北京", start_date="2026-11-03", end_date="2026-11-05")
     assert r.need_flight is True
     assert r.need_hotel is True

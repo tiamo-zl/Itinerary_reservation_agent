@@ -2,6 +2,7 @@ from itinerary_agent.infra.db import Database
 
 
 async def test_init_and_insert_task(tmp_path):
+    # 使用临时 SQLite，避免污染 ./data 下的本地数据。
     db = Database(tmp_path / "test.db")
     await db.connect()
     await db.execute(

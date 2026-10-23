@@ -3,6 +3,7 @@ from itinerary_agent.observability.tracing import TraceRecorder
 
 
 async def test_span_is_persisted(tmp_path):
+    # 验证 span 会落到 SQLite，并且 layer/status 能被查询到。
     db = Database(tmp_path / "trace.db")
     await db.connect()
     recorder = TraceRecorder(db)

@@ -1,8 +1,20 @@
+"""SQLite 结构化存储。
+
+职责边界：
+- tasks 保存任务索引（状态机的最小投影），完整状态仍在 LangGraph Checkpoint；
+- messages/user_memories 属于知识与记忆层；
+- audit_log/approvals/idempotency 属于控制与工具层；
+- spans/llm_cache/llm_calls 属于可观测与模型网关。
+
+所有访问都是 async，避免阻塞 FastAPI 事件循环。
+"""
+
 from pathlib import Path
 
 import aiosqlite
 
 SCHEMA = """
+-- 任务索引：用于 /tasks 查询、审批轮询，不替代 Checkpoint。
 CREATE TABLE IF NOT EXISTS tasks (
   task_id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -44,6 +56,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
   reason TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+-- 全链路 span：按 trace_id 查询后按 parent_span_id 建树。
 CREATE TABLE IF NOT EXISTS spans (
   span_id TEXT PRIMARY KEY,
   trace_id TEXT NOT NULL,
@@ -66,6 +79,7 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
   vector TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+-- 模型调用账本：按 task/tenant/purpose 聚合成本与 token。
 CREATE TABLE IF NOT EXISTS llm_calls (
   call_id TEXT PRIMARY KEY,
   trace_id TEXT NOT NULL,
@@ -79,6 +93,7 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   duration_ms REAL NOT NULL,
   created_at TEXT NOT NULL
 );
+-- 审批单：task_id + revision 唯一标识一次审批，避免修改后复用旧审批。
 CREATE TABLE IF NOT EXISTS approvals (
   approval_id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL,
@@ -88,6 +103,7 @@ CREATE TABLE IF NOT EXISTS approvals (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+-- 写操作幂等表：预订/审批重试时直接返回既有结果。
 CREATE TABLE IF NOT EXISTS idempotency (
   key TEXT PRIMARY KEY,
   result TEXT NOT NULL,
@@ -102,8 +118,13 @@ class Database:
         self._conn: aiosqlite.Connection | None = None
 
     async def connect(self) -> None:
+        """建立连接并确保 schema 存在。
+
+        使用 IF NOT EXISTS，可重复执行；不会删除已有数据。
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = await aiosqlite.connect(self.path)
+        # Row 工厂让查询结果可以按列名访问，避免依赖列顺序。
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(SCHEMA)
         await self._conn.commit()
@@ -115,6 +136,7 @@ class Database:
         return self._conn
 
     async def execute(self, sql: str, params: tuple = ()) -> None:
+        """执行写语句并立即提交；demo 规模不需要显式事务管理。"""
         await self.conn.execute(sql, params)
         await self.conn.commit()
 
@@ -129,4 +151,5 @@ class Database:
     async def close(self) -> None:
         if self._conn is not None:
             await self._conn.close()
+            # 置空以便测试或重启时能重新 connect。
             self._conn = None

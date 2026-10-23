@@ -1,3 +1,9 @@
+"""轻量 Trace 实现。
+
+数据模型与 OpenTelemetry 对齐（trace_id / span_id / parent_span_id），
+但不引入 OTel SDK：本地 demo 只需要能把一次请求的调用树写进 SQLite。
+"""
+
 from __future__ import annotations
 
 import json
@@ -12,17 +18,29 @@ from itinerary_agent.infra.db import Database
 
 logger = logging.getLogger(__name__)
 
+# ContextVar 让 trace/span 上下文在 async 调用链中自动传递，
+# 不需要每层函数都显式接收 trace_id 参数。
 _current_trace: ContextVar[str | None] = ContextVar("current_trace", default=None)
 _current_span: ContextVar[str | None] = ContextVar("current_span", default=None)
 
 
 class TraceRecorder:
+    """写入 SQLite 的 trace 记录器。
+
+    约定：
+    - 一次用户请求 = 一个 trace；
+    - 每个层/节点的关键操作 = 一个 span；
+    - 写入失败只记日志，绝不影响业务。
+    """
+
     def __init__(self, db: Database):
         self.db = db
 
     def start_trace(self, trace_id: str | None = None) -> str:
+        """开始一次新 trace；网关会优先复用请求头里的 trace_id。"""
         trace_id = trace_id or uuid4().hex
         _current_trace.set(trace_id)
+        # 新 trace 必须清空 span 上下文，避免复用旧请求的 parent。
         _current_span.set(None)
         return trace_id
 
@@ -31,6 +49,11 @@ class TraceRecorder:
 
     @asynccontextmanager
     async def span(self, name: str, layer: str, **attributes):
+        """创建一个 span，并在退出时落盘。
+
+        嵌套调用时自动把当前 span 作为 parent，从而形成调用树。
+        即使异常发生也会记录 error 状态，然后继续向上抛出。
+        """
         trace_id = _current_trace.get() or self.start_trace()
         span_id = uuid4().hex
         parent_id = _current_span.get()
@@ -54,6 +77,7 @@ class TraceRecorder:
 
     async def _write_span(self, span_id, trace_id, parent_id, name, layer,
                           status, started_at, duration_ms, attributes) -> None:
+        """持久化 span；观测写入不允许反向破坏业务主流程。"""
         try:
             await self.db.execute(
                 "INSERT INTO spans (span_id, trace_id, parent_span_id, name, layer, "

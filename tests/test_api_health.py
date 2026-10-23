@@ -6,6 +6,7 @@ from itinerary_agent.infra.container import build_container
 
 
 def test_health(tmp_path):
+    # TestClient 会触发 lifespan：启动时建库，退出时关闭连接。
     settings = Settings(_env_file=None, sqlite_path=tmp_path / "app.db")
     container = build_container(settings)
     app = create_app(container)
