@@ -11,9 +11,13 @@ async def plan(state: dict, deps) -> dict:
     # 规划前检索制度依据；图状态只保存引用 ID，不保存制度原文。
     refs: list[str] = []
     if deps.knowledge is not None:
-        context = await deps.knowledge.search_policy(
-            deps.ctx_of(state), "差旅住宿与机票标准"
-        )
+        async with deps.span(
+            "knowledge.search_policy", "knowledge",
+            tenant_id=state["tenant_id"],
+        ):
+            context = await deps.knowledge.search_policy(
+                deps.ctx_of(state), "差旅住宿与机票标准"
+            )
         refs = [clause.clause_id for clause in context.clauses]
 
     ctx = CallContext(

@@ -8,7 +8,10 @@ async def policy_check(state: dict, deps) -> dict:
     options = SearchResults.model_validate(state["options"])
     profile = await deps.get_user_profile(state)
 
-    result: PolicyResult = deps.control.check_policy(request, options, profile)
+    async with deps.span(
+        "control.check_policy", "control", tenant_id=state["tenant_id"]
+    ):
+        result: PolicyResult = deps.control.check_policy(request, options, profile)
     await deps.audit.record(
         state["trace_id"], state["task_id"], state["user_id"], "check_policy",
         state["options"], [violation.rule_id for violation in result.violations],

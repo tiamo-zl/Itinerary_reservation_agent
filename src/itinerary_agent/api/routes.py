@@ -5,6 +5,7 @@
 """
 
 from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -12,6 +13,7 @@ from itinerary_agent.api.context import build_context
 from itinerary_agent.api.pii import scrub
 from itinerary_agent.api.sse import to_sse
 from itinerary_agent.domain.models import Decision
+from itinerary_agent.observability.query import load_trace_tree
 
 
 class ChatRequest(BaseModel):
@@ -29,10 +31,13 @@ def build_router(container) -> APIRouter:
         container.traces.start_trace(ctx.trace_id)
 
         async def events():
-            async for event in container.orchestrator.start_turn(
-                ctx, scrub(payload.message)
+            async with container.traces.span(
+                "gateway.http", "gateway", route="/chat"
             ):
-                yield to_sse(event)
+                async for event in container.orchestrator.start_turn(
+                    ctx, scrub(payload.message)
+                ):
+                    yield to_sse(event)
 
         return EventSourceResponse(events())
 
@@ -43,8 +48,13 @@ def build_router(container) -> APIRouter:
         container.traces.start_trace(ctx.trace_id)
 
         async def events():
-            async for event in container.orchestrator.resume(ctx, task_id, decision):
-                yield to_sse(event)
+            async with container.traces.span(
+                "gateway.http", "gateway", route="/tasks/resume"
+            ):
+                async for event in container.orchestrator.resume(
+                    ctx, task_id, decision
+                ):
+                    yield to_sse(event)
 
         return EventSourceResponse(events())
 
@@ -55,5 +65,33 @@ def build_router(container) -> APIRouter:
             (task_id,),
         )
         return dict(row) if row else {"error": "not found"}
+
+    @router.get("/traces/{trace_id}")
+    async def trace_json(trace_id: str):
+        return {
+            "trace_id": trace_id,
+            "spans": await load_trace_tree(container.db, trace_id),
+        }
+
+    @router.get("/traces/{trace_id}/view", response_class=HTMLResponse)
+    async def trace_view(trace_id: str):
+        tree = await load_trace_tree(container.db, trace_id)
+
+        def render(nodes, depth: int = 0) -> list[str]:
+            lines = []
+            for node in nodes:
+                lines.append(
+                    f"<div style='margin-left:{depth * 20}px'>"
+                    f"[{node['layer']}] {node['name']} — {node['status']} "
+                    f"({node['duration_ms']:.1f}ms)</div>"
+                )
+                lines.extend(render(node["children"], depth + 1))
+            return lines
+
+        return (
+            f"<html><body><h2>Trace {trace_id}</h2>"
+            + "".join(render(tree))
+            + "</body></html>"
+        )
 
     return router

@@ -17,10 +17,22 @@ from itinerary_agent.infra.db import Database
 from itinerary_agent.model_gateway.router import resolve_model
 
 
+class _NullSpan:
+    """没有 TraceRecorder 时的空 span。"""
+
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *args):
+        return False
+
+
 class OpenAIChatGateway:
-    def __init__(self, settings: Settings, db: Database | None = None):
+    def __init__(self, settings: Settings, db: Database | None = None,
+                 traces=None):
         self.settings = settings
         self.db = db
+        self.traces = traces
         self.client = AsyncOpenAI(
             base_url=settings.deepseek_base_url,
             api_key=settings.deepseek_api_key or "missing",
@@ -58,7 +70,16 @@ class OpenAIChatGateway:
             if row:
                 return Completion.model_validate_json(row["value"])
 
-        resp = await self.client.chat.completions.create(**kwargs)
+        span = (
+            self.traces.span(
+                f"model.{ctx.purpose}", "model",
+                model=model, prompt_version=ctx.prompt_version,
+            )
+            if self.traces is not None
+            else _NullSpan()
+        )
+        async with span:
+            resp = await self.client.chat.completions.create(**kwargs)
         usage = resp.usage
         result = Completion(
             text=resp.choices[0].message.content or "",

@@ -112,7 +112,9 @@ class Container:
         if self.model is None:
             from itinerary_agent.model_gateway.gateway import OpenAIChatGateway
 
-            self.model = OpenAIChatGateway(self.settings, self.db)
+            self.model = OpenAIChatGateway(
+                self.settings, self.db, traces=self.traces
+            )
 
         if self.knowledge is None:
             from itinerary_agent.knowledge.milvus_store import MilvusClauseStore
@@ -153,7 +155,7 @@ class Container:
         )
         register_approval_tools(registry, self.approvals)
         register_booking_tools(registry, self.booking)
-        return ToolService(registry)
+        return ToolService(registry, traces=self.traces)
 
     def build_orchestrator(self):
         """装配编排服务；M1 只依赖模型和 Trace。"""
