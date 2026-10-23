@@ -16,10 +16,33 @@ from itinerary_agent.domain.models import (
     TaskStatus,
     ToolError,
     ToolResult,
+    TripRequest,
     UserProfile,
 )
 from itinerary_agent.orchestration.graph import build_graph
 from itinerary_agent.orchestration.state import initial_state
+
+
+def apply_amendment(state: dict, request: TripRequest) -> dict:
+    """应用需求修改：revision++，清空所有下游派生结果。
+
+    这一步必须在恢复图之前做，确保旧选项/旧审批/旧确认不会复活。
+    """
+    return {
+        **state,
+        "request": request.model_dump(mode="json"),
+        "revision": state["revision"] + 1,
+        "options": {"flights": [], "hotels": []},
+        "policy_result": None,
+        "policy_refs": [],
+        "approval": None,
+        "selected": {},
+        "confirmed": False,
+        "pending_amendment": None,
+        "pending_human": None,
+        "error": None,
+        "status": "PLANNING",
+    }
 
 
 class _NoopSpan:
@@ -172,6 +195,48 @@ class OrchestrationService:
             await self._set_task_status(task_id, "CANCELLED")
             yield Event(type="result", data={"task_id": task_id, "status": "CANCELLED"})
             return
+
+        if decision.action == "modify" and decision.amended_request is not None:
+            # 先更新 Checkpoint 中的需求与 revision，再恢复 confirm 节点。
+            snapshot = await self.graph.aget_state(config)
+            amended = apply_amendment(snapshot.values, decision.amended_request)
+            await self.graph.aupdate_state(config, amended)
+
+            yield Event(type="status", data={"task_id": task_id, "status": "PLANNING"})
+            interrupted_status: str | None = None
+            async for update in self.graph.astream(
+                Command(resume={"action": "modify"}),
+                config=config,
+                stream_mode="updates",
+            ):
+                for node, value in update.items():
+                    if node == "__interrupt__":
+                        interrupt_value = value[0].value
+                        interrupted_status = (
+                            "WAITING_APPROVAL"
+                            if interrupt_value.get("kind") == "approval"
+                            else "WAITING_HUMAN"
+                        )
+                        await self._set_task_status(task_id, interrupted_status)
+                        yield Event(
+                            type="interrupt",
+                            data={"task_id": task_id,
+                                  "human_request": interrupt_value},
+                        )
+                    else:
+                        yield Event(
+                            type="progress",
+                            data={"task_id": task_id, "node": node},
+                        )
+            final = await self.graph.aget_state(config)
+            final_status = interrupted_status or final.values["status"]
+            if interrupted_status is None:
+                await self._upsert_task(final.values, final_status)
+            yield Event(
+                type="result", data={"task_id": task_id, "status": final_status}
+            )
+            return
+
         payload = decision.model_dump()
         if decision.approval_status is not None:
             # 审批轮询只传 approval_status；节点需要的是简单 status 字段。
