@@ -12,9 +12,9 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 差旅预订 Agent 的生产级形态学习 demo，本地运行、外部系统全部 mock。
 
-- **M0 已完成**：配置、领域模型、SQLite、Trace、FastAPI `/health`。
-- **下一步 M1**：网关、LangGraph 主链路、脚本化模型。
-- 尚未接入真实业务系统；DeepSeek / DashScope / Milvus 在 M3 使用。
+- **M0–M5 已完成**：七层骨架、编排、工具、制度检索、差标/审批/下单、Trace 和 12 个场景。
+- 默认 scripted + mock，完全离线可运行。
+- live 模式已装配，但尚未用真实 Key 与 Milvus 做完整联调。
 
 ## 命令
 

@@ -21,3 +21,38 @@
 
 假设外部有用户系统、权限系统，角色系统，公司规章制度的PDF
 外部系统全部采用模拟数据来完成，比如我要获取当前用户信息，直接模拟返回数据。
+
+## 本地运行
+
+```bash
+uv sync --dev
+cp .env.example .env   # scripted 模式可以先不填 Key
+uv run uvicorn itinerary_agent.main:app --reload
+```
+
+打开 http://127.0.0.1:8000/ 使用最小聊天页；任务、trace 和审批接口：
+
+- `GET /tasks/{task_id}`
+- `GET /traces/{trace_id}` / `GET /traces/{trace_id}/view`
+- `POST /admin/approvals/{approval_id}/approve|reject`
+
+测试与检查：
+
+```bash
+uv run pytest -q
+uv run ruff check src tests
+```
+
+默认 `MODEL_MODE=scripted`、`ADAPTER_MODE=mock`，不访问真实模型或外部业务系统。
+切换 live 模式需要配置 DeepSeek / DashScope Key，并启动本地 Milvus（`127.0.0.1:19530`）。
+
+## 已实现
+
+- 七层分包、依赖单向检查
+- LangGraph 编排、SQLite Checkpoint、人在回路确认/恢复
+- 工具注册、参数校验、mock 用户/库存/审批/下单、幂等写操作
+- 差标规则编译与确定性求值、动作准入、审计
+- 制度条款树/引用图/表格、FTS5 + Milvus 混合检索、context pack
+- revision 修改、审批驳回/通过、取消/暂停
+- Trace/span 全链路记录与树形回放
+- 12 个端到端/集成场景

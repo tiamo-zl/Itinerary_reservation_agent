@@ -8,9 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 当前进度：
 
-- **M0 已完成**：依赖与配置、共享领域模型、SQLite schema、Trace 基础设施、FastAPI 应用与 `/health`。
-- **下一步 M1**：接入网关、LangGraph 编排主链路（脚本化模型）。
-- 暂无真实外部系统接入；DeepSeek / DashScope / Milvus 在 M3 才真正使用。
+- **M0–M5 已完成**：七层骨架、网关与编排、工具/库存、模型网关与制度检索、差标/审批/下单、Trace 与 12 个端到端场景。
+- 默认 `MODEL_MODE=scripted`、`ADAPTER_MODE=mock`，完全离线可运行。
+- live 模式（DeepSeek + DashScope + Milvus）已装配，但尚未用真实 Key 做完整联调。
 
 两份权威文档：
 
