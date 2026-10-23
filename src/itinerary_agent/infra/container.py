@@ -33,12 +33,29 @@ class Container:
 
     async def start(self) -> None:
         await self.db.connect()
+        # 没有显式注入工具时，默认装配 mock 外部系统（M2）。
+        if self.tools is None:
+            self.tools = self._default_tools()
         # 没有显式注入 orchestrator 时，按当前依赖自动装配。
         if self.orchestrator is None:
             self.orchestrator = self.build_orchestrator()
 
     async def stop(self) -> None:
         await self.db.close()
+
+    def _default_tools(self):
+        """M2 默认工具集：查询与用户信息，全部走 mock 适配器。"""
+        from itinerary_agent.adapters.mock.inventory import MockFlightInventory, MockHotelInventory
+        from itinerary_agent.adapters.mock.users import MockUserDirectory
+        from itinerary_agent.tools.builtin import build_builtin_registry
+        from itinerary_agent.tools.registry import ToolRegistry
+        from itinerary_agent.tools.service import ToolService
+
+        registry = build_builtin_registry(
+            ToolRegistry(), MockFlightInventory(), MockHotelInventory(),
+            MockUserDirectory(),
+        )
+        return ToolService(registry)
 
     def build_orchestrator(self):
         """装配编排服务；M1 只依赖模型和 Trace。"""

@@ -10,6 +10,7 @@ from langgraph.graph import END, START, StateGraph
 
 from itinerary_agent.orchestration.nodes.plan import plan
 from itinerary_agent.orchestration.nodes.respond import respond
+from itinerary_agent.orchestration.nodes.search import search
 from itinerary_agent.orchestration.nodes.understand import understand
 from itinerary_agent.orchestration.state import TravelTaskState
 
@@ -24,12 +25,14 @@ def build_graph(deps):
     graph = StateGraph(TravelTaskState)
     graph.add_node("understand", partial(understand, deps=deps))
     graph.add_node("plan", partial(plan, deps=deps))
+    graph.add_node("search", partial(search, deps=deps))
     graph.add_node("respond", partial(respond, deps=deps))
 
     graph.add_edge(START, "understand")
     graph.add_conditional_edges(
         "understand", route_after_understand, {"respond": "respond", "plan": "plan"}
     )
-    graph.add_edge("plan", "respond")
+    graph.add_edge("plan", "search")
+    graph.add_edge("search", "respond")
     graph.add_edge("respond", END)
     return graph.compile(checkpointer=getattr(deps, "checkpointer", None))

@@ -1,6 +1,11 @@
+from itinerary_agent.adapters.mock.inventory import MockFlightInventory, MockHotelInventory
+from itinerary_agent.adapters.mock.users import MockUserDirectory
 from itinerary_agent.adapters.scripted_model import ScriptedModelGateway
 from itinerary_agent.domain.models import RequestContext
 from itinerary_agent.orchestration.service import OrchestrationService
+from itinerary_agent.tools.builtin import build_builtin_registry
+from itinerary_agent.tools.registry import ToolRegistry
+from itinerary_agent.tools.service import ToolService
 
 
 async def test_understand_plan_and_respond():
@@ -10,8 +15,12 @@ async def test_understand_plan_and_respond():
         '{"steps":["search_flights","search_hotels"]}',
         '已完成行程规划。',
     ])
+    registry = build_builtin_registry(
+        ToolRegistry(), MockFlightInventory(), MockHotelInventory(), MockUserDirectory()
+    )
     service = OrchestrationService(
-        model=model, traces=None, tools=None, knowledge=None, control=None
+        model=model, traces=None, tools=ToolService(registry),
+        knowledge=None, control=None,
     )
     ctx = RequestContext(
         trace_id="t1", tenant_id="demo-company", user_id="u001",

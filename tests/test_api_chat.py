@@ -15,7 +15,7 @@ def test_chat_stream(tmp_path):
         '{"steps":["search_flights"]}',
         '已生成方案。',
     ])
-    container.orchestrator = container.build_orchestrator()
+    # 不预构建 orchestrator：让 lifespan 按模型 + 默认 mock 工具自动装配。
     app = create_app(container)
 
     with TestClient(app) as client, client.stream(
