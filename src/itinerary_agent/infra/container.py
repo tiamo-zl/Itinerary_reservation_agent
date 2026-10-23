@@ -33,10 +33,16 @@ class Container:
     checkpointer: object | None = None
     rules: object | None = None
     audit: object | None = None
+    policy_store: object | None = None
     conn: aiosqlite.Connection | None = None
 
     async def start(self) -> None:
         await self.db.connect()
+
+        # live 模式才接入真实模型和 Milvus；scripted 模式保持完全离线。
+        if self.settings.model_mode == "live":
+            await self._init_live_model_and_knowledge()
+
         # 没有显式注入工具时，默认装配 mock 外部系统（M2）。
         if self.tools is None:
             self.tools = self._default_tools()
@@ -54,6 +60,31 @@ class Container:
         if self.conn is not None:
             await self.conn.close()
             self.conn = None
+
+    async def _init_live_model_and_knowledge(self) -> None:
+        """按 live 模式装配真实模型网关与制度检索。"""
+        if self.model is None:
+            from itinerary_agent.model_gateway.gateway import OpenAIChatGateway
+
+            self.model = OpenAIChatGateway(self.settings, self.db)
+
+        if self.knowledge is None:
+            from itinerary_agent.knowledge.milvus_store import MilvusClauseStore
+            from itinerary_agent.knowledge.policy_store import PolicyStore
+            from itinerary_agent.knowledge.service import KnowledgeService
+            from itinerary_agent.model_gateway.embeddings import DashScopeEmbedder
+
+            self.policy_store = PolicyStore(self.db)
+            await self.policy_store.init()
+            self.knowledge = KnowledgeService(
+                embedder=DashScopeEmbedder(self.settings),
+                policy_store=self.policy_store,
+                dense_store=MilvusClauseStore(self.settings),
+                policy_version=self.settings.policy_version,
+                seed_top_k=self.settings.policy_seed_top_k,
+                graph_hops=self.settings.policy_graph_hops,
+                max_expanded_clauses=self.settings.policy_max_expanded_clauses,
+            )
 
     def _default_tools(self):
         """M2 默认工具集：查询与用户信息，全部走 mock 适配器。"""
