@@ -50,6 +50,53 @@ GET_USER = ToolSpec(
 )
 
 
+SUBMIT_APPROVAL = ToolSpec(
+    name="submit_approval",
+    description="提交差旅审批",
+    side_effect="write",
+    risk="high",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string"},
+            "revision": {"type": "integer"},
+            "payload": {"type": "object"},
+        },
+        "required": ["task_id", "revision", "payload"],
+    },
+    output_schema={"type": "object"},
+)
+
+GET_APPROVAL = ToolSpec(
+    name="get_approval_status",
+    description="查询审批状态",
+    side_effect="read",
+    risk="low",
+    input_schema={
+        "type": "object",
+        "properties": {"approval_id": {"type": "string"}},
+        "required": ["approval_id"],
+    },
+    output_schema={"type": "object"},
+)
+
+
+def register_approval_tools(registry, approvals):
+    """注册审批相关工具；审批系统由适配器注入。"""
+
+    async def submit_approval(ctx, args):
+        ref = await approvals.submit(args["task_id"], args["revision"], args["payload"])
+        return ref.model_dump(mode="json")
+
+    async def get_approval_status(ctx, args):
+        ref = await approvals.get(args["approval_id"])
+        return ref.model_dump(mode="json")
+
+    registry.register(SUBMIT_APPROVAL, submit_approval)
+    registry.register(GET_APPROVAL, get_approval_status)
+    return registry
+
+
 def build_builtin_registry(registry, flights, hotels, users):
     """把查询/用户工具注册到 ToolRegistry。
 
