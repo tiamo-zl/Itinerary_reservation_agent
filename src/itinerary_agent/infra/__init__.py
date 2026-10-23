@@ -1,0 +1,1 @@
+"""Infrastructure and composition root."""

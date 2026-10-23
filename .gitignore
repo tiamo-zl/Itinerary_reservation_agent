@@ -3,3 +3,7 @@ __pycache__/
 *.py[cod]
 .idea/
 .DS_Store
+.pytest_cache/
+.ruff_cache/
+data/
+.env
