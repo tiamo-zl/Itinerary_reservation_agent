@@ -11,6 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 from itinerary_agent.api.context import build_context
 from itinerary_agent.api.pii import scrub
 from itinerary_agent.api.sse import to_sse
+from itinerary_agent.domain.models import Decision
 
 
 class ChatRequest(BaseModel):
@@ -31,6 +32,18 @@ def build_router(container) -> APIRouter:
             async for event in container.orchestrator.start_turn(
                 ctx, scrub(payload.message)
             ):
+                yield to_sse(event)
+
+        return EventSourceResponse(events())
+
+    @router.post("/tasks/{task_id}/resume")
+    async def resume(task_id: str, decision: Decision, request: Request):
+        # 恢复接口同样使用 SSE，客户端可以继续看到后续节点进度。
+        ctx = build_context(request)
+        container.traces.start_trace(ctx.trace_id)
+
+        async def events():
+            async for event in container.orchestrator.resume(ctx, task_id, decision):
                 yield to_sse(event)
 
         return EventSourceResponse(events())

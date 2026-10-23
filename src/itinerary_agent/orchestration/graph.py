@@ -8,6 +8,7 @@ from functools import partial
 
 from langgraph.graph import END, START, StateGraph
 
+from itinerary_agent.orchestration.nodes.confirm import confirm
 from itinerary_agent.orchestration.nodes.plan import plan
 from itinerary_agent.orchestration.nodes.respond import respond
 from itinerary_agent.orchestration.nodes.search import search
@@ -26,6 +27,7 @@ def build_graph(deps):
     graph.add_node("understand", partial(understand, deps=deps))
     graph.add_node("plan", partial(plan, deps=deps))
     graph.add_node("search", partial(search, deps=deps))
+    graph.add_node("confirm", partial(confirm, deps=deps))
     graph.add_node("respond", partial(respond, deps=deps))
 
     graph.add_edge(START, "understand")
@@ -33,6 +35,7 @@ def build_graph(deps):
         "understand", route_after_understand, {"respond": "respond", "plan": "plan"}
     )
     graph.add_edge("plan", "search")
-    graph.add_edge("search", "respond")
+    graph.add_edge("search", "confirm")
+    graph.add_edge("confirm", "respond")
     graph.add_edge("respond", END)
     return graph.compile(checkpointer=getattr(deps, "checkpointer", None))

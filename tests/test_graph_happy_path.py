@@ -27,5 +27,5 @@ async def test_understand_plan_and_respond():
         session_id="s1", roles=["employee"],
     )
     events = [event async for event in service.start_turn(ctx, "下周二去北京出差两天")]
-    assert events[-1].type == "result"
-    assert events[-1].data["status"] == "COMPLETED"
+    # M2 起搜索后会进入人类确认节点；完整完成路径由 test_hitl 覆盖。
+    assert any(event.type == "interrupt" for event in events)

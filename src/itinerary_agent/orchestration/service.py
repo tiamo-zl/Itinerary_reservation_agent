@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 from itinerary_agent.domain.models import (
+    Decision,
     Event,
     ModelTier,
     RequestContext,
@@ -157,3 +158,50 @@ class OrchestrationService:
                 "summary": final.values.get("summary", ""),
             },
         )
+
+    async def resume(self, ctx: RequestContext, task_id: str,
+                     decision: Decision) -> AsyncIterator[Event]:
+        """从 Checkpoint 恢复被 interrupt 的任务。
+
+        M2 只处理确认/取消；M3 增加修改请求，M4 增加审批结果。
+        """
+        from langgraph.types import Command
+
+        config = {"configurable": {"thread_id": task_id}}
+        payload = decision.model_dump()
+        if decision.approval_status is not None:
+            # 审批轮询只传 approval_status；节点需要的是简单 status 字段。
+            payload = {
+                "status": decision.approval_status.value,
+                "comment": decision.comment or "",
+            }
+
+        yield Event(type="status", data={"task_id": task_id, "status": "EXECUTING"})
+        interrupted_status: str | None = None
+        async for update in self.graph.astream(
+            Command(resume=payload), config=config, stream_mode="updates"
+        ):
+            for node, value in update.items():
+                if node == "__interrupt__":
+                    interrupt_value = value[0].value
+                    interrupted_status = (
+                        "WAITING_APPROVAL"
+                        if interrupt_value.get("kind") == "approval"
+                        else "WAITING_HUMAN"
+                    )
+                    await self._set_task_status(task_id, interrupted_status)
+                    yield Event(
+                        type="interrupt",
+                        data={"task_id": task_id, "human_request": interrupt_value},
+                    )
+                else:
+                    yield Event(
+                        type="progress",
+                        data={"task_id": task_id, "node": node},
+                    )
+
+        final = await self.graph.aget_state(config)
+        final_status = interrupted_status or final.values["status"]
+        if interrupted_status is None:
+            await self._upsert_task(final.values, final_status)
+        yield Event(type="result", data={"task_id": task_id, "status": final_status})
