@@ -235,8 +235,8 @@ class OrchestrationService:
                         )
             final = await self.graph.aget_state(config)
             final_status = interrupted_status or final.values["status"]
-            if interrupted_status is None:
-                await self._upsert_task(final.values, final_status)
+            # 修改会改变 revision；即使再次停在确认节点也要更新任务索引。
+            await self._upsert_task(final.values, final_status)
             yield Event(
                 type="result", data={"task_id": task_id, "status": final_status}
             )

@@ -38,6 +38,9 @@ class Container:
     approvals: object | None = None
     booking: object | None = None
     poller: object | None = None
+    flight_inventory: object | None = None
+    hotel_inventory: object | None = None
+    user_directory: object | None = None
     conn: aiosqlite.Connection | None = None
 
     async def start(self) -> None:
@@ -150,8 +153,10 @@ class Container:
         from itinerary_agent.tools.service import ToolService
 
         registry = build_builtin_registry(
-            ToolRegistry(), MockFlightInventory(), MockHotelInventory(),
-            MockUserDirectory(),
+            ToolRegistry(),
+            self.flight_inventory or MockFlightInventory(),
+            self.hotel_inventory or MockHotelInventory(),
+            self.user_directory or MockUserDirectory(),
         )
         register_approval_tools(registry, self.approvals)
         register_booking_tools(registry, self.booking)
