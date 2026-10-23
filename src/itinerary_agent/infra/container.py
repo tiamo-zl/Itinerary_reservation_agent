@@ -1,6 +1,7 @@
 """组合根：把配置、数据库和可观测组件装配在一起。
 
 只有这里允许知道具体实现；业务层通过接口拿依赖。
+M1 起增加编排服务的装配，M2/M3 会继续挂载 Checkpoint、工具、知识层。
 """
 
 from dataclasses import dataclass
@@ -14,19 +15,52 @@ from itinerary_agent.observability.tracing import TraceRecorder
 class Container:
     """进程内依赖容器。
 
-    M0 只包含基础设施；后续里程碑会继续挂载模型网关、工具、知识层等。
-    资源生命周期跟随 FastAPI lifespan：start 建连接，stop 释放。
+    资源生命周期跟随 FastAPI lifespan；测试可以替换 model/orchestrator。
     """
 
     settings: Settings
     db: Database
     traces: TraceRecorder
 
+    model: object | None = None
+    orchestrator: object | None = None
+    tools: object | None = None
+    knowledge: object | None = None
+    control: object | None = None
+    checkpointer: object | None = None
+    rules: object | None = None
+    audit: object | None = None
+
     async def start(self) -> None:
         await self.db.connect()
+        # 没有显式注入 orchestrator 时，按当前依赖自动装配。
+        if self.orchestrator is None:
+            self.orchestrator = self.build_orchestrator()
 
     async def stop(self) -> None:
         await self.db.close()
+
+    def build_orchestrator(self):
+        """装配编排服务；M1 只依赖模型和 Trace。"""
+        from itinerary_agent.orchestration.service import OrchestrationService
+
+        return OrchestrationService(
+            model=self.model or self._default_model(),
+            traces=self.traces,
+            tools=self.tools,
+            knowledge=self.knowledge,
+            control=self.control,
+            checkpointer=self.checkpointer,
+            db=self.db,
+            rules=self.rules,
+            audit=self.audit,
+        )
+
+    def _default_model(self):
+        # 无 API Key 时的离线默认实现；真实模型在 M3 接入。
+        from itinerary_agent.adapters.scripted_model import ScriptedModelGateway
+
+        return ScriptedModelGateway([])
 
 
 def build_container(settings: Settings | None = None) -> Container:

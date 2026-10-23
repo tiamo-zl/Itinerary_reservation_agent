@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from itinerary_agent.api.routes import build_router
 from itinerary_agent.infra.container import Container
 
 
@@ -32,4 +33,6 @@ def create_app(container: Container) -> FastAPI:
         # M0 只返回进程级健康；M3 起会扩展为检查 Milvus/模型配置。
         return {"status": "ok", "env": container.settings.env}
 
+    # /chat 与 /tasks/*：SSE 流式入口和任务查询。
+    app.include_router(build_router(container))
     return app
