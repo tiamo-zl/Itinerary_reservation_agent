@@ -122,7 +122,7 @@ onMounted(() => {
   </section>
 
   <template v-if="detail">
-    <div class="grid-2">
+    <div class="grid-2 trace-layout">
       <section class="card">
         <div class="card-header">
           <h2>调用树</h2>
@@ -147,10 +147,10 @@ onMounted(() => {
         <div v-if="!flatSpans.length" class="empty">没有 span</div>
       </section>
 
-      <section class="card">
+      <section class="card history-card">
         <h2>Checkpoint 状态历史</h2>
         <div v-if="detail.task_id" class="small muted mono">task {{ detail.task_id }}</div>
-        <div v-if="history.length" class="event-list">
+        <div v-if="history.length" class="event-list history-list">
           <div v-for="(item, index) in history" :key="item.checkpoint_id || index" class="event">
             <strong>#{{ history.length - index }} · {{ item.created_at || 'unknown' }}</strong>
             <div class="small">next: {{ item.next.join(', ') || '—' }}</div>

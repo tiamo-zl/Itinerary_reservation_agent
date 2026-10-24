@@ -122,6 +122,17 @@ h3 { font-size: 15px; margin: 0 0 10px; }
 
 .grid-2 { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.75fr); gap: 18px; }
 .stack { display: grid; gap: 18px; }
+
+.trace-layout {
+  align-items: stretch;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+}
+.history-card { display: flex; flex-direction: column; min-height: 0; }
+.history-card .history-list { flex: 1; max-height: none; min-height: 180px; }
+
+@media (max-width: 860px) {
+  .trace-layout { grid-template-columns: 1fr; }
+}
 .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 
