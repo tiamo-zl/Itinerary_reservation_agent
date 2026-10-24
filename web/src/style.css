@@ -14,6 +14,8 @@
   --warn-soft: #fff1d6;
   --bad: #a11d1d;
   --bad-soft: #ffe6e6;
+  --trace: #d97706;
+  --trace-soft: #fff3e0;
   --radius: 14px;
   --shadow: 0 8px 24px rgba(20, 35, 70, 0.06);
   font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
@@ -36,6 +38,8 @@
     --warn-soft: #3a2b12;
     --bad: #ff9a9a;
     --bad-soft: #3d1c1c;
+    --trace: #ffb65c;
+    --trace-soft: #3a2a10;
     --shadow: none;
   }
 }
@@ -264,6 +268,12 @@ textarea { resize: vertical; }
 }
 .message.user { margin-left: auto; background: var(--accent-soft); }
 .message.assistant { background: var(--surface); }
+.message.message-trace {
+  border-color: var(--trace);
+  background: var(--trace-soft);
+  box-shadow: inset 3px 0 0 var(--trace);
+}
+.badge-trace { background: var(--trace-soft); color: var(--trace); border: 1px solid var(--trace); }
 .message-role {
   color: var(--muted);
   font-size: 11px;

@@ -71,8 +71,8 @@ class MemoryStore:
 
     async def list_messages(self, session_id: str, limit: int = 100) -> list[dict]:
         rows = await self.db.fetchall(
-            "SELECT role, content, created_at FROM messages WHERE session_id = ? "
-            "ORDER BY id ASC LIMIT ?",
+            "SELECT role, content, task_id, created_at FROM messages "
+            "WHERE session_id = ? ORDER BY id ASC LIMIT ?",
             (session_id, limit),
         )
         return [dict(row) for row in rows]

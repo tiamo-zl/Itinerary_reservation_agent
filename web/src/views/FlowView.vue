@@ -4,16 +4,20 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import {
   getJson,
+  type ChatMessage,
   type FlowEdge,
   type FlowNode,
   type FlowStep,
+  type TaskState,
   type TraceFlow,
 } from '../api'
+import ChatTranscript from '../components/ChatTranscript.vue'
 
 const route = useRoute()
 const router = useRouter()
 const traceId = ref(String(route.params.traceId || ''))
 const flow = ref<TraceFlow | null>(null)
+const messages = ref<ChatMessage[]>([])
 const stepIndex = ref(0)
 const playing = ref(false)
 const errorText = ref('')
@@ -135,8 +139,22 @@ async function load() {
   stop()
   errorText.value = ''
   stepIndex.value = 0
+  messages.value = []
   try {
-    flow.value = await getJson<TraceFlow>(`/traces/${traceId.value.trim()}/flow`)
+    const data = await getJson<TraceFlow>(
+      `/traces/${traceId.value.trim()}/flow`,
+    )
+    flow.value = data
+    if (data.task_id) {
+      const state = await getJson<TaskState>(`/tasks/${data.task_id}/state`)
+      const sessionId = state.values?.session_id
+      if (sessionId) {
+        const chat = await getJson<{ messages: ChatMessage[] }>(
+          `/sessions/${sessionId}/messages`,
+        )
+        messages.value = chat.messages || []
+      }
+    }
     start()
   } catch (error) {
     errorText.value = error instanceof Error ? error.message : String(error)
@@ -190,6 +208,14 @@ onUnmounted(stop)
       当前：<strong>{{ stepText(currentStep) }}</strong>
       <span class="muted">（{{ stepIndex + 1 }} / {{ flow.timeline.length }}）</span>
     </p>
+  </section>
+
+  <section v-if="flow" class="card">
+    <h2>聊天对话</h2>
+    <div class="small muted" style="margin-bottom: 8px">
+      橙色为本 trace 对应任务的消息。
+    </div>
+    <ChatTranscript :messages="messages" :active-task-id="flow.task_id" />
   </section>
 
   <section v-if="flow" class="card">

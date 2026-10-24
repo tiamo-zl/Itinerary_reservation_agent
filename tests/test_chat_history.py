@@ -18,6 +18,7 @@ async def test_chat_history_roundtrip(tmp_path):
 
         first = client.get("/sessions/session-1/messages").json()["messages"]
         assert first[-1]["role"] == "user"
+        assert first[-1]["task_id"] == task_id
         assert "北京" in first[-1]["content"]
 
         resumed = post_sse(

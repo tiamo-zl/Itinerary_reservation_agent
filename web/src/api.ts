@@ -93,6 +93,7 @@ export interface TaskState {
 export interface ChatMessage {
   role: string
   content: string
+  task_id?: string | null
   created_at?: string
 }
 

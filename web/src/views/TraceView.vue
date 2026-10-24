@@ -12,6 +12,7 @@ import {
   type TaskState,
   type TraceDetail,
 } from '../api'
+import ChatTranscript from '../components/ChatTranscript.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -205,18 +206,10 @@ onMounted(() => {
     <div class="grid-2" style="margin-top: 18px">
       <section class="card">
         <h2>聊天对话</h2>
-        <div v-if="messages.length" class="chat-history">
-          <div
-            v-for="(item, index) in messages"
-            :key="index"
-            class="message"
-            :class="item.role"
-          >
-            <div class="message-role">{{ item.role }}</div>
-            <div class="message-content">{{ item.content }}</div>
-          </div>
+        <div class="small muted" style="margin-bottom: 8px">
+          橙色为本 trace 对应任务的消息。
         </div>
-        <div v-else class="empty">该 trace 没有关联聊天消息</div>
+        <ChatTranscript :messages="messages" :active-task-id="detail.task_id" />
       </section>
 
       <section class="card">
