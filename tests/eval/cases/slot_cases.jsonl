@@ -1,0 +1,2 @@
+{"id":"slot-alias-beijing","today":"2026-10-21","raw":{"destination":"北京","departure_date":"2026-11-03","duration_days":2,"budget":1000,"hotel_area":"王府井"},"expected":{"destination_city":"北京","start_date":"2026-11-03","end_date":"2026-11-04","budget_limit":1000,"need_flight":true,"need_hotel":true}}
+{"id":"slot-relative-next-tuesday","today":"2026-10-21","raw":{"destination":"北京","departure_date":"下周二","duration_days":2},"expected":{"destination_city":"北京","start_weekday":1,"duration_days":1}}

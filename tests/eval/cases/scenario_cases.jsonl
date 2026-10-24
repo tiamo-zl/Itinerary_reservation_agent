@@ -1,0 +1,12 @@
+{"id":"normal_booking","test":"test_normal_booking"}
+{"id":"over_policy_approval","test":"test_over_policy_requires_approval"}
+{"id":"approval_rejected","test":"test_approval_rejected"}
+{"id":"amendment","test":"test_amendment_invalidates_downstream"}
+{"id":"no_results","test":"test_no_results_asks_human"}
+{"id":"pause_resume_cancel","test":"test_pause_resume_cancel"}
+{"id":"tool_failure_rag_degraded","test":"test_tool_failure_and_rag_degraded"}
+{"id":"booking_without_approval","test":"test_booking_without_approval_denied"}
+{"id":"cross_clause","test":"test_cross_clause_citation"}
+{"id":"exception_clause","test":"test_exception_clause_applied"}
+{"id":"table_row","test":"test_table_row_selection"}
+{"id":"version_insufficient","test":"test_policy_version_and_insufficient"}

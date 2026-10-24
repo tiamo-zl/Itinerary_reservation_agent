@@ -1,0 +1,2 @@
+{"id":"policy-over-limit-approval","level":"L1","destination_city":"北京","hotel_price":800,"limit":500,"allow_approval":true,"expected_passed":false,"expected_requires_approval":true}
+{"id":"policy-within-limit","level":"L1","destination_city":"北京","hotel_price":480,"limit":500,"allow_approval":true,"expected_passed":true,"expected_requires_approval":false}
