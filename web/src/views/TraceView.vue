@@ -128,9 +128,14 @@ onMounted(() => {
           <h2>调用树</h2>
           <span class="muted small">{{ flatSpans.length }} spans</span>
         </div>
-        <div v-for="row in flatSpans" :key="row.span.span_id" class="trace-row">
+        <div
+          v-for="row in flatSpans"
+          :key="row.span.span_id"
+          class="trace-row"
+          :style="{ paddingLeft: `${row.depth * 18}px` }"
+        >
           <span class="badge" :class="layerClass(row.span.layer)">{{ row.span.layer }}</span>
-          <div :class="{ 'trace-indent': row.depth > 0 }">
+          <div class="trace-main">
             <strong class="mono small">{{ row.span.name }}</strong>
             <div class="small muted">{{ row.span.duration_ms.toFixed(1) }} ms</div>
             <details v-if="Object.keys(row.span.attributes).length">

@@ -219,14 +219,16 @@ textarea { resize: vertical; }
 
 .trace-row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  /* 第一列按 layer 文本自适应，避免 gateway 徽标压到 span 名称。 */
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 10px;
   align-items: start;
   padding: 8px 0;
   border-bottom: 1px solid var(--border);
 }
 .trace-row:last-child { border-bottom: none; }
-.trace-indent { border-left: 1px solid var(--border); padding-left: 12px; }
+.trace-main { min-width: 0; }
+.trace-main .mono { display: inline-block; word-break: break-word; }
 
 .chat-history {
   display: grid;
