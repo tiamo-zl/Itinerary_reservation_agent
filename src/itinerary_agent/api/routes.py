@@ -175,6 +175,25 @@ def build_router(container) -> APIRouter:
             "latest_state": latest_state,
         }
 
+    @router.get("/tasks/{task_id}/approvals")
+    async def task_approvals(task_id: str, request: Request):
+        ctx = build_context(request)
+        task = await container.db.fetchone(
+            "SELECT user_id FROM tasks WHERE task_id = ?", (task_id,)
+        )
+        if task is None:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        if not _is_admin(ctx) and task["user_id"] != ctx.user_id:
+            return JSONResponse(status_code=403, content={"error": "forbidden"})
+        rows = await container.db.fetchall(
+            "SELECT a.*, t.trace_id, t.user_id, t.tenant_id AS task_tenant_id, "
+            "t.status AS task_status FROM approvals a "
+            "LEFT JOIN tasks t ON t.task_id = a.task_id "
+            "WHERE a.task_id = ? ORDER BY a.created_at DESC",
+            (task_id,),
+        )
+        return {"approvals": [await _approval_item(row) for row in rows]}
+
     @router.get("/sessions")
     async def sessions(request: Request, limit: int = 50):
         # 会话来自 messages；任务状态通过 task_id 关联，供历史列表显示进展。

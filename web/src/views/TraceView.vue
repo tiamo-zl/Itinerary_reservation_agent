@@ -5,8 +5,11 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   getJson,
   postJson,
+  type ApprovalItem,
+  type ChatMessage,
   type HistoryItem,
   type SpanNode,
+  type TaskState,
   type TraceDetail,
 } from '../api'
 
@@ -15,6 +18,8 @@ const router = useRouter()
 const traceId = ref(String(route.params.traceId || ''))
 const detail = ref<TraceDetail | null>(null)
 const history = ref<HistoryItem[]>([])
+const messages = ref<ChatMessage[]>([])
+const approvals = ref<ApprovalItem[]>([])
 const loading = ref(false)
 const errorText = ref('')
 const feedbackMessage = ref('')
@@ -49,11 +54,19 @@ function statusClass(status: string) {
   return 'badge-good'
 }
 
+function approvalClass(status: string) {
+  if (status === 'rejected') return 'badge-bad'
+  if (status === 'approved') return 'badge-good'
+  return 'badge-warn'
+}
+
 async function load() {
   if (!traceId.value.trim()) return
   loading.value = true
   errorText.value = ''
   history.value = []
+  messages.value = []
+  approvals.value = []
   try {
     const data = await getJson<TraceDetail>(`/traces/${traceId.value}`)
     detail.value = data
@@ -62,6 +75,26 @@ async function load() {
         `/tasks/${data.task_id}/history`,
       )
       history.value = state.history || []
+
+      const taskState = await getJson<TaskState>(
+        `/tasks/${data.task_id}/state`,
+      )
+      const sessionId = taskState.values?.session_id
+      if (sessionId) {
+        const chat = await getJson<{ messages: ChatMessage[] }>(
+          `/sessions/${sessionId}/messages`,
+        )
+        messages.value = chat.messages || []
+      }
+
+      try {
+        const approvalData = await getJson<{ approvals: ApprovalItem[] }>(
+          `/tasks/${data.task_id}/approvals`, 'u002',
+        )
+        approvals.value = approvalData.approvals || []
+      } catch {
+        approvals.value = []
+      }
     }
   } catch (error) {
     errorText.value = error instanceof Error ? error.message : String(error)
@@ -161,6 +194,57 @@ onMounted(() => {
           </div>
         </div>
         <div v-else class="empty">该 trace 没有关联任务状态，或历史为空</div>
+      </section>
+    </div>
+
+    <div class="grid-2" style="margin-top: 18px">
+      <section class="card">
+        <h2>聊天对话</h2>
+        <div v-if="messages.length" class="chat-history">
+          <div
+            v-for="(item, index) in messages"
+            :key="index"
+            class="message"
+            :class="item.role"
+          >
+            <div class="message-role">{{ item.role }}</div>
+            <div class="message-content">{{ item.content }}</div>
+          </div>
+        </div>
+        <div v-else class="empty">该 trace 没有关联聊天消息</div>
+      </section>
+
+      <section class="card">
+        <h2>审批信息</h2>
+        <div v-if="approvals.length" class="event-list">
+          <div v-for="item in approvals" :key="item.approval_id" class="event">
+            <div class="row">
+              <span class="badge" :class="approvalClass(item.status)">
+                {{ item.status }}
+              </span>
+              <span class="mono small">{{ item.approval_id }}</span>
+            </div>
+            <div class="small muted" style="margin-top: 6px">
+              revision {{ item.revision }} · {{ item.created_at }}
+            </div>
+            <div v-if="item.comment" class="small">审批意见：{{ item.comment }}</div>
+            <details v-if="item.payload?.policy_result?.violations?.length">
+              <summary>超标明细</summary>
+              <div
+                v-for="(violation, index) in item.payload.policy_result.violations"
+                :key="index"
+                class="small"
+              >
+                {{ violation.rule_id }} · {{ violation.message }}
+              </div>
+            </details>
+            <details v-if="item.payload?.request">
+              <summary>差旅需求</summary>
+              <pre>{{ JSON.stringify(item.payload.request, null, 2) }}</pre>
+            </details>
+          </div>
+        </div>
+        <div v-else class="empty">该任务没有审批记录</div>
       </section>
     </div>
 

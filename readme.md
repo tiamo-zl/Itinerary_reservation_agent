@@ -77,7 +77,7 @@ Vite 会把 `/chat`、`/tasks`、`/traces`、`/admin`、`/feedback`、`/badcases
 - `/conversations`：全部对话记录，点击查看消息历史、任务和当前进展
 - `/approvals`：审批工作台，展示待审批任务的差旅需求、超标明细和候选方案
 - `/flow`：输入 `trace_id` 查看节点/边流转图，每秒高亮下一次流转
-- `/trace`：输入 `trace_id` 查看调用树和 Checkpoint 状态历史，并提交反馈
+- `/trace`：输入 `trace_id` 查看调用树、Checkpoint 历史、聊天对话和审批信息，并提交反馈
 - `/overview`：错误率、分层延迟、模型 token/成本、最近 trace 和 badcase
 
 ```bash

@@ -33,6 +33,12 @@ async def test_approval_page_payload(tmp_path):
         ).json()
         assert detail["approval_id"] == approval_id
 
+        task_approvals = client.get(
+            f"/tasks/{task_id}/approvals", headers={"X-Mock-User": "u002"}
+        ).json()["approvals"]
+        assert task_approvals[0]["approval_id"] == approval_id
+        assert task_approvals[0]["payload"]["policy_result"]["violations"]
+
         state = client.get(f"/tasks/{task_id}/state").json()
         # interrupt 现场在 snapshot.next 中；审批页/聊天页据此判断待办节点。
         assert "approval" in state["next"]
