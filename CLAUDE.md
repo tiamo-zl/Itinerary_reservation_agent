@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **M0–M5 已完成**：七层骨架、网关与编排、工具/库存、模型网关与制度检索、差标/审批/下单、Trace 与 12 个端到端场景。
 - 默认 `MODEL_MODE=scripted`、`ADAPTER_MODE=mock`，完全离线可运行。
-- live 模式（DeepSeek + DashScope + Milvus）已装配，但尚未用真实 Key 做完整联调。
+- live 模式已用 DeepSeek + DashScope + 本地 Milvus 完成主链路、审批与修改需求联调。
 
 两份权威文档：
 

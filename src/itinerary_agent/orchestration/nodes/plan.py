@@ -4,7 +4,10 @@ import json
 
 from itinerary_agent.domain.models import CallContext
 
-SYSTEM = "根据差旅需求生成执行步骤。只输出 {\"steps\": [\"...\"]}。"
+SYSTEM = (
+    "根据差旅需求生成执行步骤。只输出一个 JSON 对象，格式为 "
+    '{"steps":["search_flights","search_hotels"]}，不要 Markdown，不要解释。'
+)
 
 
 async def plan(state: dict, deps) -> dict:
@@ -31,5 +34,11 @@ async def plan(state: dict, deps) -> dict:
         ]
         completion = await deps.model.complete(ctx, messages, deps.tier_reasoning)
 
-    steps = json.loads(completion.text).get("steps", [])
+    try:
+        text = completion.text.strip()
+        start, end = text.find("{"), text.rfind("}")
+        steps = json.loads(text[start:end + 1]).get("steps", [])
+    except Exception:  # noqa: BLE001 - 模型输出不可信，解析失败需降级
+        # 规划输出解析失败不阻塞主链路；搜索节点仍会执行查询。
+        steps = ["search_flights", "search_hotels"]
     return {"plan": steps, "status": "EXECUTING", "policy_refs": refs}

@@ -1,0 +1,76 @@
+{
+  "doc_id": "travel-policy",
+  "tenant_id": "demo-company",
+  "policy_version": "2026.1",
+  "effective_from": "2026-01-01",
+  "effective_to": null,
+  "clauses": [
+    {
+      "clause_id": "ch3",
+      "parent_id": null,
+      "path": "travel-policy/ch3",
+      "clause_type": "chapter",
+      "title": "第三章 住宿",
+      "text": "本章规定员工差旅住宿标准。",
+      "refs": [],
+      "ref_texts": [],
+      "exceptions": [],
+      "aliases": [],
+      "table_id": null,
+      "order_no": 1
+    },
+    {
+      "clause_id": "c1",
+      "parent_id": "ch3",
+      "path": "travel-policy/ch3/c1",
+      "clause_type": "clause",
+      "title": "住宿标准",
+      "text": "一线城市 L2 员工住宿上限 500 元/晚，具体标准见附表二。",
+      "refs": ["c2"],
+      "ref_texts": [],
+      "exceptions": ["c3"],
+      "aliases": [],
+      "table_id": "t1",
+      "order_no": 2
+    },
+    {
+      "clause_id": "c2",
+      "parent_id": "ch3",
+      "path": "travel-policy/ch3/c2",
+      "clause_type": "clause",
+      "title": "附表二",
+      "text": "各职级、城市等级住宿上限见附表二。",
+      "refs": [],
+      "ref_texts": [],
+      "exceptions": [],
+      "aliases": [],
+      "table_id": "t1",
+      "order_no": 3
+    },
+    {
+      "clause_id": "c3",
+      "parent_id": "ch3",
+      "path": "travel-policy/ch3/c3",
+      "clause_type": "clause",
+      "title": "例外条款",
+      "text": "紧急会议或不可抗力情况下，可提交特批申请。",
+      "refs": [],
+      "ref_texts": [],
+      "exceptions": [],
+      "aliases": [],
+      "table_id": null,
+      "order_no": 4
+    }
+  ],
+  "tables": [
+    {
+      "table_id": "t1",
+      "source_clause_id": "c1",
+      "columns": ["职级", "城市", "上限"],
+      "rows": [
+        {"职级": "L2", "城市": "一线", "上限": 500},
+        {"职级": "L3", "城市": "一线", "上限": 700}
+      ]
+    }
+  ]
+}

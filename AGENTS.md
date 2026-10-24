@@ -14,7 +14,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 - **M0–M5 已完成**：七层骨架、编排、工具、制度检索、差标/审批/下单、Trace 和 12 个场景。
 - 默认 scripted + mock，完全离线可运行。
-- live 模式已装配，但尚未用真实 Key 与 Milvus 做完整联调。
+- live 模式已用真实 DeepSeek / DashScope / 本地 Milvus 完成主链路、审批和修改需求联调。
 
 ## 命令
 
