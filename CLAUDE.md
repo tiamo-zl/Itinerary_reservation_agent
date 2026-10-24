@@ -9,6 +9,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 当前进度：
 
 - **M0–M5 已完成**：七层骨架、网关与编排、工具/库存、模型网关与制度检索、差标/审批/下单、Trace 与 12 个端到端场景。
+- **观测控制台**：`web/`（Vue 3 + Vite）提供聊天、trace 回放、线上概览；后端提供 trace 列表/概览、Checkpoint 历史、反馈与 badcase 回流。
+- **评测集 harness**：`tests/eval/`，JSONL 用例覆盖槽位、差标和场景清单。
 - 默认 `MODEL_MODE=scripted`、`ADAPTER_MODE=mock`，完全离线可运行。
 - live 模式已用 DeepSeek + DashScope + 本地 Milvus 完成主链路、审批与修改需求联调。
 
@@ -28,6 +30,10 @@ uv run pytest tests/test_db.py -v # 单文件
 uv run pytest tests/test_db.py::test_init_and_insert_task -v  # 单测试
 uv run ruff check src tests       # lint
 uv run uvicorn --app-dir src itinerary_agent.main:app --reload
+
+cd web && npm install              # 前端依赖由用户安装
+cd web && npm run dev              # Vue 控制台 http://127.0.0.1:5173
+cd web && npm run build            # 类型检查 + 构建
 ```
 
 依赖由用户安装：不要自行执行 `uv add`、`uv sync` 或下载中间件。需要新依赖时先说明用途并等待用户安装。
@@ -70,6 +76,7 @@ infra/          配置、SQLite、组合根
 ## 环境注意事项
 
 - Python 3.13 + uv；`.venv` 由 uv 管理。
+- 前端 Node 24 + npm；前端依赖由用户安装，不要自行执行 `npm install`。
 - `pymupdf` 固定为 `<2.0`：2.0 会引入 `pymupdf-layout` → `onnxruntime`，后者没有 Intel macOS x86_64 wheel。
 - `pymilvus` 固定为 `<3.0`，保持 2.x `MilvusClient` API。
 - Milvus 使用本地已有服务：`127.0.0.1:19530`。

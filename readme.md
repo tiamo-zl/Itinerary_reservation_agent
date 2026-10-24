@@ -56,3 +56,26 @@ uv run ruff check src tests
 - revision 修改、审批驳回/通过、取消/暂停
 - Trace/span 全链路记录与树形回放
 - 12 个端到端/集成场景
+- 观测控制台 API：trace 列表/概览、Checkpoint 历史、反馈与 badcase 回流
+- JSONL 评测集 harness：`tests/eval/`
+
+## 前端控制台（Vue）
+
+```bash
+cd web
+npm install        # 由你安装前端依赖
+npm run dev        # http://127.0.0.1:5173
+```
+
+Vite 会把 `/chat`、`/tasks`、`/traces`、`/admin`、`/feedback`、`/badcases`
+代理到本地后端 `127.0.0.1:8000`。
+
+页面：
+
+- `/`：差旅助手对话，支持审批、确认、修改需求
+- `/trace`：输入 `trace_id` 查看调用树和 Checkpoint 状态历史，并提交反馈
+- `/overview`：错误率、分层延迟、模型 token/成本、最近 trace 和 badcase
+
+```bash
+npm run build      # 类型检查 + 生产构建
+```

@@ -13,6 +13,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 差旅预订 Agent 的生产级形态学习 demo，本地运行、外部系统全部 mock。
 
 - **M0–M5 已完成**：七层骨架、编排、工具、制度检索、差标/审批/下单、Trace 和 12 个场景。
+- **观测控制台**：`web/`（Vue 3 + Vite）聊天、trace 回放、线上概览；`tests/eval/` 评测集。
 - 默认 scripted + mock，完全离线可运行。
 - live 模式已用真实 DeepSeek / DashScope / 本地 Milvus 完成主链路、审批和修改需求联调。
 
@@ -24,6 +25,8 @@ uv run pytest -q
 uv run pytest tests/test_db.py::test_init_and_insert_task -v
 uv run ruff check src tests
 uv run uvicorn --app-dir src itinerary_agent.main:app --reload
+cd web && npm install
+cd web && npm run dev
 ```
 
 依赖与中间件由用户安装；不要自行执行 `uv add`、`uv sync` 或下载组件。
