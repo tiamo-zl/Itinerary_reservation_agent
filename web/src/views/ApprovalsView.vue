@@ -110,7 +110,11 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div class="grid-2">
+    <div v-if="!item.payload" class="empty">
+      这条历史审批单缺少需求快照，无法展示明细；请让申请人重新发起。
+    </div>
+
+    <div v-else class="grid-2">
       <div>
         <h3>差旅需求</h3>
         <table class="table">

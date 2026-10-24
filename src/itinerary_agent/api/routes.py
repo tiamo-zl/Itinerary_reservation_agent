@@ -117,6 +117,27 @@ def build_router(container) -> APIRouter:
             "history": await container.orchestrator.get_history(task_id, limit),
         }
 
+    async def _approval_item(row) -> dict:
+        """把审批行转成前端结构；旧数据从 Checkpoint 回填快照。"""
+        item = dict(row)
+        payload = json.loads(item["payload"]) if item["payload"] else None
+        if payload is None and item.get("task_id"):
+            try:
+                state = await container.orchestrator.get_state(item["task_id"])
+                values = state.get("values") or {}
+                if values:
+                    payload = {
+                        "request": values.get("request"),
+                        "options": values.get("options"),
+                        "policy_result": values.get("policy_result"),
+                        "revision": values.get("revision"),
+                    }
+            except Exception:  # noqa: BLE001 - 旧审批单允许缺失快照
+                payload = None
+        item["payload"] = payload
+        item["tenant_id"] = item.pop("task_tenant_id", None)
+        return item
+
     @router.get("/approvals")
     async def approvals(request: Request, status: str = "pending",
                         limit: int = 50):
@@ -130,13 +151,7 @@ def build_router(container) -> APIRouter:
             "WHERE a.status = ? ORDER BY a.created_at DESC LIMIT ?",
             (status, limit),
         )
-        items = []
-        for row in rows:
-            item = dict(row)
-            item["payload"] = json.loads(item["payload"]) if item["payload"] else None
-            item["tenant_id"] = item.pop("task_tenant_id", None)
-            items.append(item)
-        return {"approvals": items}
+        return {"approvals": [await _approval_item(row) for row in rows]}
 
     @router.get("/approvals/{approval_id}")
     async def approval_detail(approval_id: str, request: Request):
@@ -151,10 +166,7 @@ def build_router(container) -> APIRouter:
         )
         if row is None:
             return JSONResponse(status_code=404, content={"error": "not found"})
-        item = dict(row)
-        item["payload"] = json.loads(item["payload"]) if item["payload"] else None
-        item["tenant_id"] = item.pop("task_tenant_id", None)
-        return item
+        return await _approval_item(row)
 
     @router.post("/feedback")
     async def feedback(payload: FeedbackRequest, request: Request):
