@@ -10,7 +10,10 @@ from itinerary_agent.domain.models import HumanRequest, HumanRequestType
 
 async def request_approval(state: dict, deps) -> dict:
     # span 在 interrupt 前结束，避免审批等待期间一直挂着一个未完成的 span。
-    async with deps.span("orchestration.node.approval", "orchestration"):
+    async with deps.span(
+        "orchestration.node.approval", "orchestration",
+        trace_id=state["trace_id"],
+    ):
         result = await deps.guarded_invoke(
             state, "submit_approval", "submit_approval",
             {

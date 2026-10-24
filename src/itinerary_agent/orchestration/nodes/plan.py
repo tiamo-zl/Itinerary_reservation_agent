@@ -16,7 +16,7 @@ async def plan(state: dict, deps) -> dict:
     if deps.knowledge is not None:
         async with deps.span(
             "knowledge.search_policy", "knowledge",
-            tenant_id=state["tenant_id"],
+            tenant_id=state["tenant_id"], trace_id=state["trace_id"],
         ):
             context = await deps.knowledge.search_policy(
                 deps.ctx_of(state), "差旅住宿与机票标准"
@@ -27,7 +27,10 @@ async def plan(state: dict, deps) -> dict:
         trace_id=state["trace_id"], tenant_id=state["tenant_id"],
         task_id=state["task_id"], purpose="plan",
     )
-    async with deps.span("orchestration.node.plan", "orchestration"):
+    async with deps.span(
+        "orchestration.node.plan", "orchestration",
+        trace_id=state["trace_id"],
+    ):
         messages = [
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": json.dumps(state["request"], ensure_ascii=False)},

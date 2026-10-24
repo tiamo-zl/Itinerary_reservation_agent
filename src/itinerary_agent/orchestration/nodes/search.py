@@ -9,7 +9,10 @@ from itinerary_agent.domain.models import TripRequest
 async def search(state: dict, deps) -> dict:
     request = TripRequest.model_validate(state["request"])
 
-    async with deps.span("orchestration.node.search", "orchestration"):
+    async with deps.span(
+        "orchestration.node.search", "orchestration",
+        trace_id=state["trace_id"],
+    ):
         flights = []
         hotels = []
 

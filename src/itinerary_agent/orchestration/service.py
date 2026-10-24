@@ -77,9 +77,13 @@ class OrchestrationService:
         self.tier_reasoning = ModelTier.REASONING
         self.graph = build_graph(self)
 
-    def span(self, name: str, layer: str, **attrs):
+    def span(self, name: str, layer: str, trace_id: str | None = None, **attrs):
         if self.traces is None:
             return _NoopSpan()
+        if trace_id:
+            # 显式绑定 trace，避免审批轮询等无 gateway 上下文的恢复路径
+            # 在独立 asyncio task 中丢失 contextvar 后生成新 trace。
+            self.traces.start_trace(trace_id)
         return self.traces.span(name, layer, **attrs)
 
     def ctx_of(self, state: dict) -> RequestContext:

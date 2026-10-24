@@ -10,7 +10,10 @@ async def respond(state: dict, deps) -> dict:
         trace_id=state["trace_id"], tenant_id=state["tenant_id"],
         task_id=state["task_id"], purpose="summarize",
     )
-    async with deps.span("orchestration.node.respond", "orchestration"):
+    async with deps.span(
+        "orchestration.node.respond", "orchestration",
+        trace_id=state["trace_id"],
+    ):
         messages = [
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": str(state.get("request"))},

@@ -6,7 +6,10 @@ from itinerary_agent.domain.models import HumanRequest, HumanRequestType
 async def book(state: dict, deps) -> dict:
     selected = state.get("selected", {})
 
-    async with deps.span("orchestration.node.book", "orchestration"):
+    async with deps.span(
+        "orchestration.node.book", "orchestration",
+        trace_id=state["trace_id"],
+    ):
         if selected.get("flight_id"):
             result = await deps.guarded_invoke(
                 state, "book_flight", "book_flight",

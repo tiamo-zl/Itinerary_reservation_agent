@@ -7,10 +7,14 @@ async def policy_check(state: dict, deps) -> dict:
     request = TripRequest.model_validate(state["request"])
     options = SearchResults.model_validate(state["options"])
 
-    async with deps.span("orchestration.node.policy", "orchestration"):
+    async with deps.span(
+        "orchestration.node.policy", "orchestration",
+        trace_id=state["trace_id"],
+    ):
         profile = await deps.get_user_profile(state)
         async with deps.span(
-            "control.check_policy", "control", tenant_id=state["tenant_id"]
+            "control.check_policy", "control",
+            tenant_id=state["tenant_id"], trace_id=state["trace_id"],
         ):
             result: PolicyResult = deps.control.check_policy(request, options, profile)
         await deps.audit.record(

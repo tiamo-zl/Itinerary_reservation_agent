@@ -37,8 +37,11 @@ class TraceRecorder:
         self.db = db
 
     def start_trace(self, trace_id: str | None = None) -> str:
-        """开始一次新 trace；网关会优先复用请求头里的 trace_id。"""
+        """开始或沿用一次 trace；沿用时不打断当前 span 父子关系。"""
         trace_id = trace_id or uuid4().hex
+        if _current_trace.get() == trace_id:
+            # 同一 trace 内节点显式绑定 trace 时，不要清空 parent span。
+            return trace_id
         _current_trace.set(trace_id)
         # 新 trace 必须清空 span 上下文，避免复用旧请求的 parent。
         _current_span.set(None)

@@ -14,7 +14,10 @@ async def confirm(state: dict, deps) -> dict:
     if state.get("confirmed"):
         return {"status": "EXECUTING"}
 
-    async with deps.span("orchestration.node.confirm", "orchestration"):
+    async with deps.span(
+        "orchestration.node.confirm", "orchestration",
+        trace_id=state["trace_id"],
+    ):
         message = "请确认方案后继续下单。"
         if state.get("pending_human"):
             message = state["pending_human"].get("message", message)

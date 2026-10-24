@@ -137,7 +137,10 @@ async def understand(state: dict, deps) -> dict:
         task_id=state["task_id"], purpose="understand",
     )
     system = SYSTEM_TEMPLATE.format(today=date.today().isoformat())
-    async with deps.span("orchestration.node.understand", "orchestration"):
+    async with deps.span(
+        "orchestration.node.understand", "orchestration",
+        trace_id=state["trace_id"],
+    ):
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": state["request"].get("raw_message", "")},
