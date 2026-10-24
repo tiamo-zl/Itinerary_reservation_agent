@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     trace_retention_days: int = 7
     capture_prompt: bool = False
     mock_approval_delay_seconds: float = 5.0
+    # 默认手动审批，审批页才能真正展示待办；需要自动通过时显式开启。
+    mock_approval_auto_approve: bool = False
 
     # 制度检索参数：种子数、图扩展跳数和上下文上限。
     policy_version: str = "2026.1"

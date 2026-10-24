@@ -58,6 +58,38 @@ export interface Badcase {
   updated_at: string
 }
 
+export interface ApprovalItem {
+  approval_id: string
+  task_id: string
+  revision: number
+  status: string
+  comment: string | null
+  payload: {
+    request?: Record<string, any>
+    options?: {
+      flights?: Array<Record<string, any>>
+      hotels?: Array<Record<string, any>>
+    }
+    policy_result?: {
+      passed?: boolean
+      requires_approval?: boolean
+      violations?: Array<Record<string, any>>
+    }
+    revision?: number
+  } | null
+  trace_id: string | null
+  user_id: string | null
+  tenant_id: string | null
+  task_status: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskState {
+  values: Record<string, any>
+  next: string[]
+}
+
 export interface OverviewData {
   totals: {
     traces: number

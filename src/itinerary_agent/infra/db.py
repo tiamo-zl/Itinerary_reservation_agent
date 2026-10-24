@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS approvals (
   revision INTEGER NOT NULL,
   status TEXT NOT NULL,
   comment TEXT,
+  payload TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -155,6 +156,11 @@ class Database:
             columns = {row["name"] for row in await cursor.fetchall()}
         if "trace_id" not in columns:
             await self.conn.execute("ALTER TABLE tasks ADD COLUMN trace_id TEXT")
+
+        async with self.conn.execute("PRAGMA table_info(approvals)") as cursor:
+            approval_columns = {row["name"] for row in await cursor.fetchall()}
+        if "payload" not in approval_columns:
+            await self.conn.execute("ALTER TABLE approvals ADD COLUMN payload TEXT")
 
     @property
     def conn(self) -> aiosqlite.Connection:

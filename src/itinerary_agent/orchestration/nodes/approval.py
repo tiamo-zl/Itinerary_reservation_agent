@@ -17,6 +17,8 @@ async def request_approval(state: dict, deps) -> dict:
             "payload": {
                 "request": state["request"],
                 "options": state["options"],
+                "policy_result": state.get("policy_result"),
+                "revision": state["revision"],
             },
         },
     )

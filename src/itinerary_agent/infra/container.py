@@ -53,7 +53,9 @@ class Container:
             from itinerary_agent.adapters.mock.approval import MockApprovalSystem
 
             self.approvals = MockApprovalSystem(
-                self.db, self.settings.mock_approval_delay_seconds
+                self.db,
+                self.settings.mock_approval_delay_seconds,
+                auto_approve=self.settings.mock_approval_auto_approve,
             )
         if self.booking is None:
             from itinerary_agent.adapters.mock.booking import MockBookingSystem

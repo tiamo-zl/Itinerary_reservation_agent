@@ -4,6 +4,7 @@
 它不直接调用工具或模型，也不保存 LangGraph 状态。
 """
 
+import json
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
@@ -103,6 +104,11 @@ def build_router(container) -> APIRouter:
         )
         return dict(row) if row else {"error": "not found"}
 
+    @router.get("/tasks/{task_id}/state")
+    async def task_state(task_id: str):
+        # 供聊天页在审批完成后重新加载待确认中断。
+        return await container.orchestrator.get_state(task_id)
+
     @router.get("/tasks/{task_id}/history")
     async def task_history(task_id: str, limit: int = 100):
         # Checkpoint 历史用于“状态级回放”，和 trace 的调用树互补。
@@ -110,6 +116,45 @@ def build_router(container) -> APIRouter:
             "task_id": task_id,
             "history": await container.orchestrator.get_history(task_id, limit),
         }
+
+    @router.get("/approvals")
+    async def approvals(request: Request, status: str = "pending",
+                        limit: int = 50):
+        ctx = build_context(request)
+        if not _is_admin(ctx):
+            return JSONResponse(status_code=403, content={"error": "forbidden"})
+        rows = await container.db.fetchall(
+            "SELECT a.*, t.trace_id, t.user_id, t.tenant_id AS task_tenant_id, "
+            "t.status AS task_status FROM approvals a "
+            "LEFT JOIN tasks t ON t.task_id = a.task_id "
+            "WHERE a.status = ? ORDER BY a.created_at DESC LIMIT ?",
+            (status, limit),
+        )
+        items = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item["payload"]) if item["payload"] else None
+            item["tenant_id"] = item.pop("task_tenant_id", None)
+            items.append(item)
+        return {"approvals": items}
+
+    @router.get("/approvals/{approval_id}")
+    async def approval_detail(approval_id: str, request: Request):
+        ctx = build_context(request)
+        if not _is_admin(ctx):
+            return JSONResponse(status_code=403, content={"error": "forbidden"})
+        row = await container.db.fetchone(
+            "SELECT a.*, t.trace_id, t.user_id, t.tenant_id AS task_tenant_id, "
+            "t.status AS task_status FROM approvals a "
+            "LEFT JOIN tasks t ON t.task_id = a.task_id WHERE a.approval_id = ?",
+            (approval_id,),
+        )
+        if row is None:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        item = dict(row)
+        item["payload"] = json.loads(item["payload"]) if item["payload"] else None
+        item["tenant_id"] = item.pop("task_tenant_id", None)
+        return item
 
     @router.post("/feedback")
     async def feedback(payload: FeedbackRequest, request: Request):

@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -13,9 +14,11 @@ from itinerary_agent.infra.db import Database
 
 
 class MockApprovalSystem:
-    def __init__(self, db: Database, auto_approve_delay: float = 5.0):
+    def __init__(self, db: Database, auto_approve_delay: float = 5.0,
+                 auto_approve: bool = False):
         self.db = db
         self.delay = auto_approve_delay
+        self.auto_approve = auto_approve
         self._tasks: set[asyncio.Task] = set()
 
     async def submit(self, task_id: str, revision: int, payload: dict) -> ApprovalRef:
@@ -31,11 +34,14 @@ class MockApprovalSystem:
         now = datetime.now(UTC).isoformat()
         await self.db.execute(
             "INSERT INTO approvals (approval_id, task_id, revision, status, comment, "
-            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (approval_id, task_id, revision, "pending", None, now, now),
+            "payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                approval_id, task_id, revision, "pending", None,
+                json.dumps(payload, ensure_ascii=False), now, now,
+            ),
         )
-        # demo 默认自动通过，便于演示主链路；手动审批用 decide 模拟驳回。
-        if self.delay < 900:
+        # 默认不自动通过，让审批页展示待办；需要演示自动通过时显式开启。
+        if self.auto_approve and self.delay < 900:
             timer = asyncio.create_task(self._auto_approve(approval_id))
             self._tasks.add(timer)
             timer.add_done_callback(self._tasks.discard)

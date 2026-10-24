@@ -1,18 +1,21 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { RouterLink, useRoute } from 'vue-router'
 
-import { streamPost, type SSEEvent } from '../api'
+import { getJson, streamPost, type SSEEvent, type TaskState } from '../api'
 
+const route = useRoute()
 const user = ref('u002')
 const message = ref('下周二去北京出差两天，住王府井附近，预算 1000 元')
 const events = ref<SSEEvent[]>([])
 const busy = ref(false)
+const loadingTask = ref(false)
 const errorText = ref('')
 const taskId = ref('')
 const traceId = ref('')
+const taskStatus = ref('')
+const loadTaskId = ref(String(route.query.task || ''))
 const interrupt = ref<Record<string, any> | null>(null)
-const comment = ref('')
 const showModify = ref(false)
 const amended = ref({
   destination_city: '上海',
@@ -40,6 +43,7 @@ function handleEvent(event: SSEEvent) {
   const data = event.data || {}
   if (data.task_id) taskId.value = data.task_id
   if (data.trace_id) traceId.value = data.trace_id
+  if (data.status) taskStatus.value = data.status
   if (event.type === 'interrupt') {
     interrupt.value = data.human_request || null
     showModify.value = false
@@ -66,22 +70,46 @@ async function send() {
   events.value = []
   taskId.value = ''
   traceId.value = ''
+  taskStatus.value = ''
   interrupt.value = null
   await run('/chat', { message: message.value })
+}
+
+async function loadTask() {
+  if (!loadTaskId.value.trim()) return
+  loadingTask.value = true
+  errorText.value = ''
+  try {
+    const state = await getJson<TaskState>(`/tasks/${loadTaskId.value.trim()}/state`)
+    taskId.value = loadTaskId.value.trim()
+    traceId.value = String(state.values.trace_id || '')
+    taskStatus.value = String(state.values.status || '')
+    const next = state.next || []
+    if (next.includes('approval')) {
+      interrupt.value = {
+        kind: 'approval',
+        message: '该任务需要审批，请前往审批工作台处理。',
+      }
+    } else if (next.includes('confirm')) {
+      interrupt.value = {
+        type: 'confirm_option',
+        message: '请确认方案后继续下单。',
+        options: state.values.options?.flights || [],
+      }
+    } else {
+      interrupt.value = null
+    }
+  } catch (error) {
+    errorText.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    loadingTask.value = false
+  }
 }
 
 async function resume(payload: unknown) {
   if (!taskId.value) return
   interrupt.value = null
   await run(`/tasks/${taskId.value}/resume`, payload)
-}
-
-async function decideApproval(status: 'approved' | 'rejected') {
-  await resume({
-    action: 'continue',
-    approval_status: status,
-    comment: comment.value,
-  })
 }
 
 async function confirmFirst() {
@@ -103,6 +131,10 @@ async function submitModify() {
   }
   await resume({ action: 'modify', amended_request: request })
 }
+
+onMounted(() => {
+  if (loadTaskId.value) loadTask()
+})
 </script>
 
 <template>
@@ -147,11 +179,28 @@ async function submitModify() {
     </section>
 
     <aside class="card">
-      <h2>会话与人工决策</h2>
+      <h2>任务与人工决策</h2>
+
       <div class="field">
-        <label>Trace</label>
-        <div class="mono small">{{ traceId || '发送请求后生成' }}</div>
-        <RouterLink v-if="traceId" :to="`/trace/${traceId}`">查看 trace 回放 →</RouterLink>
+        <label for="load-task">按 task_id 加载（审批后回到此页时用）</label>
+        <div class="row">
+          <input
+            id="load-task"
+            v-model="loadTaskId"
+            placeholder="task_id"
+            style="flex: 1"
+          />
+          <button class="btn" :disabled="loadingTask" @click="loadTask">加载</button>
+        </div>
+      </div>
+
+      <div v-if="taskId" class="field">
+        <div class="small muted">当前任务</div>
+        <div class="mono small">{{ taskId }}</div>
+        <div v-if="taskStatus" class="row" style="margin-top: 6px">
+          <span class="badge">{{ taskStatus }}</span>
+          <RouterLink v-if="traceId" :to="`/trace/${traceId}`">Trace 回放 →</RouterLink>
+        </div>
       </div>
 
       <div v-if="interrupt" class="field">
@@ -159,14 +208,10 @@ async function submitModify() {
         <p>{{ interrupt.message }}</p>
 
         <template v-if="isApproval">
-          <div class="field">
-            <label for="approval-comment">审批意见</label>
-            <input id="approval-comment" v-model="comment" placeholder="例如：超标，需说明原因" />
-          </div>
-          <div class="row">
-            <button class="btn btn-primary" :disabled="busy" @click="decideApproval('approved')">通过</button>
-            <button class="btn btn-danger" :disabled="busy" @click="decideApproval('rejected')">驳回</button>
-          </div>
+          <p class="muted small">
+            对话与审批已分离。审批通过后，回到本页点击“加载”继续确认方案。
+          </p>
+          <RouterLink class="btn btn-primary" to="/approvals">前往审批工作台</RouterLink>
         </template>
 
         <template v-else>
@@ -201,6 +246,9 @@ async function submitModify() {
         </template>
       </div>
 
+      <p v-else-if="taskId && taskStatus === 'COMPLETED'" class="ok small">
+        任务已完成。
+      </p>
       <p v-else class="muted small">
         当差标超标或需要确认时，这里会出现审批/确认/修改操作。
       </p>

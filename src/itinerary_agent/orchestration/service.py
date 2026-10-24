@@ -191,6 +191,29 @@ class OrchestrationService:
             },
         )
 
+    async def get_state(self, task_id: str) -> dict:
+        """返回任务当前 Checkpoint 状态，供聊天页恢复中断/刷新使用。"""
+        config = {"configurable": {"thread_id": task_id}}
+        snapshot = await self._await_interrupted_state(config)
+        return {
+            "values": dict(snapshot.values),
+            "next": list(snapshot.next),
+        }
+
+    async def _await_interrupted_state(self, config):
+        """等待 interrupt 现场可见。
+
+        SQLite Checkpoint 与业务表共用连接时，SSE 刚结束的极短时间内
+        aget_state 可能读到旧快照；resume 前短暂重试，避免误判为空任务。
+        """
+        snapshot = await self.graph.aget_state(config)
+        for _ in range(10):
+            if snapshot.values and snapshot.next:
+                return snapshot
+            await asyncio.sleep(0.05)
+            snapshot = await self.graph.aget_state(config)
+        return snapshot
+
     async def get_history(self, task_id: str, limit: int = 100) -> list[dict]:
         """读取 Checkpoint 历史，用于前端回放状态迁移。
 
@@ -236,7 +259,14 @@ class OrchestrationService:
 
         if decision.action == "modify" and decision.amended_request is not None:
             # 先更新 Checkpoint 中的需求与 revision，再恢复 confirm 节点。
-            snapshot = await self.graph.aget_state(config)
+            snapshot = await self._await_interrupted_state(config)
+            if not snapshot.values or not snapshot.next:
+                yield Event(type="error", data={
+                    "task_id": task_id, "trace_id": ctx.trace_id,
+                    "code": "CHECKPOINT_NOT_READY",
+                    "message": "任务现场尚未就绪或已结束，无法修改。",
+                })
+                return
             amended = apply_amendment(snapshot.values, decision.amended_request)
             await self.graph.aupdate_state(config, amended)
 
@@ -277,12 +307,7 @@ class OrchestrationService:
 
         # Checkpoint 刚写完时极短时间内可能不可见；先确认现场存在，
         # 避免 Command 从空状态重新跑 understand。
-        snapshot = await self.graph.aget_state(config)
-        for _ in range(5):
-            if snapshot.values and snapshot.next:
-                break
-            await asyncio.sleep(0.02)
-            snapshot = await self.graph.aget_state(config)
+        snapshot = await self._await_interrupted_state(config)
         if not snapshot.values or not snapshot.next:
             yield Event(type="error", data={
                 "task_id": task_id, "trace_id": ctx.trace_id,
