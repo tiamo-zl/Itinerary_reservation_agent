@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import {
   getJson,
@@ -143,7 +143,12 @@ onMounted(() => {
   <section class="card">
     <div class="card-header">
       <h2>Trace 回放</h2>
-      <span v-if="detail?.task_status" class="badge badge-accent">{{ detail.task_status }}</span>
+      <div class="row">
+        <span v-if="detail?.task_status" class="badge badge-accent">{{ detail.task_status }}</span>
+        <RouterLink v-if="traceId" :to="`/flow/${traceId}`" class="btn btn-ghost">
+          编排流转图 →
+        </RouterLink>
+      </div>
     </div>
     <div class="row">
       <input v-model="traceId" placeholder="输入 trace_id，例如 live-p1" @keyup.enter="openTrace" />
