@@ -42,16 +42,27 @@ class KnowledgeService:
 
     async def search_policy(self, ctx, query: str,
                             filters=None) -> PolicyContext:
+        """混合召回并组装制度上下文。
+
+        步骤：
+        1. query → embedding 向量；
+        2. 向量召回 + FTS5 关键词召回；
+        3. RRF 融合并截取种子条款；
+        4. 沿引用/例外/父子边做图扩展；
+        5. 取出并过滤结构化表格；
+        6. 组装 PolicyContext，标记 degraded/insufficient。
+        """
         try:
+            # 步骤 1：把查询转成向量。
             call_ctx = CallContext(
                 trace_id=ctx.trace_id, tenant_id=ctx.tenant_id, purpose="embed"
             )
             vector = (await self.embedder.embed(call_ctx, [query]))[0]
+
+            # 步骤 2：向量召回和关键词召回各自独立容错。
             dense = self.dense_store.search(
                 ctx.tenant_id, self.policy_version, vector, 10
             )
-
-            # 关键词检索失败不应拖垮向量召回，因此单独捕获。
             try:
                 keyword = await self.policy_store.keyword_search(
                     ctx.tenant_id, self.policy_version, query, 10
@@ -59,6 +70,7 @@ class KnowledgeService:
             except Exception:  # noqa: BLE001 - 关键词失败不应影响向量召回
                 keyword = []
 
+            # 步骤 3：用 RRF 融合两路排名，取前 seed_top_k 个条款。
             seed_ids = rrf_fuse(
                 [hit["clause_id"] for hit in keyword],
                 [hit["clause_id"] for hit in dense],
@@ -71,11 +83,13 @@ class KnowledgeService:
                     trace={"reason": "no_seed"},
                 )
 
+            # 步骤 4：图扩展，带出引用、例外和父章节。
             clauses = await self.policy_store.expand(
                 seed_ids, hops=self.graph_hops
             )
             clauses = clauses[:self.max_expanded_clauses]
 
+            # 步骤 5：按 table_id 取结构化表格，并按职级/城市过滤行。
             tables: list[PolicyTable] = []
             missing_table = False
             for clause in clauses:
@@ -95,6 +109,7 @@ class KnowledgeService:
                 if table.table_id not in {item.table_id for item in tables}:
                     tables.append(table)
 
+            # 步骤 6：组装 context pack；表格缺失意味着信息不足。
             return PolicyContext(
                 clauses=[
                     PolicyClause(

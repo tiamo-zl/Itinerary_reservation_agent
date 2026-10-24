@@ -44,9 +44,11 @@ def _matches(rule, user: UserProfile, request: TripRequest) -> bool:
 
 def check_policy(request: TripRequest, options: SearchResults,
                  user: UserProfile, rules: PolicyRules) -> PolicyResult:
+    # 步骤 1：准备违规列表和“是否需要审批”标记。
     violations: list[Violation] = []
     requires_approval = False
 
+    # 步骤 2：求值住宿规则（职级/城市等级/生效日期）。
     hotel_rules = [
         rule for rule in rules.rules
         if rule.category == "hotel" and _matches(rule, user, request)
@@ -65,6 +67,7 @@ def check_policy(request: TripRequest, options: SearchResults,
                 ))
                 requires_approval = requires_approval or rule.allow_approval
 
+    # 步骤 3：求值机票规则（价格上限、舱位约束）。
     flight_rules = [
         rule for rule in rules.rules
         if rule.category == "flight" and _matches(rule, user, request)
@@ -91,7 +94,7 @@ def check_policy(request: TripRequest, options: SearchResults,
                 ))
                 requires_approval = requires_approval or rule.allow_approval
 
-    # 没有精确规则时回落到企业默认标准；默认值也缺失则拒绝。
+    # 步骤 4：没有精确住宿规则时回落到企业默认标准；默认值缺失则拒绝。
     if not hotel_rules and options.hotels:
         default_limit = rules.defaults.get("hotel", {}).get("max_price_per_night")
         if default_limit is None:
@@ -110,6 +113,7 @@ def check_policy(request: TripRequest, options: SearchResults,
                         limit=default_limit, actual=hotel.price_per_night,
                     ))
 
+    # 步骤 5：没有精确机票规则时回落到默认机票标准。
     if not flight_rules and options.flights:
         default_limit = rules.defaults.get("flight", {}).get("max_price")
         if default_limit is None:
@@ -128,6 +132,7 @@ def check_policy(request: TripRequest, options: SearchResults,
                         limit=default_limit, actual=flight.price,
                     ))
 
+    # 步骤 6：只要存在 block 违规就不通过；warn 只提示，不阻断。
     passed = not any(violation.severity == "block" for violation in violations)
     return PolicyResult(
         passed=passed,

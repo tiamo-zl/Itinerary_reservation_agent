@@ -43,18 +43,30 @@ class Container:
     user_directory: object | None = None
 
     async def start(self) -> None:
-        await self.db.connect()
+        """按依赖顺序装配整个进程。
 
+        步骤：
+        1. 连接 SQLite 并准备短期/长期记忆；
+        2. live 模式装配真实模型与 Milvus；
+        3. 创建 mock 审批与下单系统；
+        4. 组装工具注册表；
+        5. 装载差标规则、审计和动作控制；
+        6. 初始化 Checkpoint（复用业务库连接）；
+        7. 编译编排图；
+        8. 启动审批轮询器。
+        """
+        # 步骤 1：基础设施与记忆。
+        await self.db.connect()
         if self.memory is None:
             from itinerary_agent.knowledge.memory import MemoryStore
 
             self.memory = MemoryStore(self.db)
 
-        # live 模式才接入真实模型和 Milvus；scripted 模式保持完全离线。
+        # 步骤 2：live 模式才接入真实模型和 Milvus；scripted 保持离线。
         if self.settings.model_mode == "live":
             await self._init_live_model_and_knowledge()
 
-        # 审批与下单是 mock 外部系统，先于工具注册创建。
+        # 步骤 3：审批与下单是 mock 外部系统，先于工具注册创建。
         if self.approvals is None:
             from itinerary_agent.adapters.mock.approval import MockApprovalSystem
 
@@ -68,11 +80,11 @@ class Container:
 
             self.booking = MockBookingSystem(self.db)
 
-        # 没有显式注入工具时，默认装配 mock 外部系统。
+        # 步骤 4：没有显式注入工具时，默认装配 mock 外部系统。
         if self.tools is None:
             self.tools = self._default_tools()
 
-        # 控制层：规则、审计、动作准入。
+        # 步骤 5：控制层（规则、审计、动作准入）。
         if self.audit is None:
             from itinerary_agent.control.audit import AuditLog
 
@@ -89,18 +101,17 @@ class Container:
 
             self.control = ControlService(self.rules, self.audit)
 
-        # M2 起使用 SQLite Checkpoint；测试可注入 MemorySaver 跳过持久化。
-        # 复用业务库连接，避免两个 aiosqlite 连接同时写同一文件时出现
-        # checkpoint 尚未可见、resume 从空状态重新开始的竞态。
+        # 步骤 6：初始化 Checkpoint；复用业务库连接，避免同文件多连接
+        # 导致 resume 时 checkpoint 尚未可见的竞态。
         if self.checkpointer is None:
             self.checkpointer = AsyncSqliteSaver(self.db.conn)
             await self.checkpointer.setup()
 
-        # 没有显式注入 orchestrator 时，按当前依赖自动装配。
+        # 步骤 7：编译编排图。
         if self.orchestrator is None:
             self.orchestrator = self.build_orchestrator()
 
-        # 审批结果轮询：从 Checkpoint 恢复 WAITING_APPROVAL 的任务。
+        # 步骤 8：启动审批结果轮询，从 Checkpoint 恢复 WAITING_APPROVAL 任务。
         if self.poller is None:
             from itinerary_agent.orchestration.approval_poller import ApprovalPoller
 

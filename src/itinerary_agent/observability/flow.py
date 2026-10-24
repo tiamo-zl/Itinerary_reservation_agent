@@ -46,20 +46,31 @@ NODE_LABELS = {node["id"]: node["label"] for node in GRAPH_NODES}
 
 
 def build_flow(spans: list[dict]) -> dict:
-    """按 orchestration span 的先后顺序生成 node/edge timeline。"""
+    """按 orchestration span 的先后顺序生成 node/edge timeline。
+
+    步骤：
+    1. 过滤出本图的 orchestration 节点 span；
+    2. 对连续重复节点去重（interrupt 恢复会重跑当前节点）；
+    3. 相邻节点之间补一条边，并查找真实边条件；
+    4. 输出节点、边和按时间排序的 timeline。
+    """
     timeline: list[dict] = []
     prev_node: str | None = None
 
     for span in spans:
+        # 步骤 1：只接受 known orchestration node span。
         name = span["name"]
         if not name.startswith("orchestration.node."):
             continue
         node = name.removeprefix("orchestration.node.")
         if node not in NODE_IDS:
             continue
-        # interrupt 恢复时同一节点会再执行一次，避免产生自环。
+
+        # 步骤 2：interrupt 恢复时同一节点会再执行一次，避免产生自环。
         if node == prev_node:
             continue
+
+        # 步骤 3：在前后节点之间补边，使用静态图里的标签/条件。
         if prev_node is not None:
             edge = EDGE_BY_PAIR.get((prev_node, node))
             timeline.append({
@@ -80,6 +91,7 @@ def build_flow(spans: list[dict]) -> dict:
         })
         prev_node = node
 
+    # 步骤 4：返回全图 + 本次实际走过的 timeline。
     return {
         "nodes": GRAPH_NODES,
         "edges": GRAPH_EDGES,

@@ -131,10 +131,20 @@ class PolicyStore:
         return [dict(row) for row in rows]
 
     async def expand(self, seed_ids: list[str], hops: int = 1) -> list[dict]:
-        """沿引用/例外/父子边扩展条款，返回带 refs 的节点集合。"""
+        """沿引用/例外/父子边扩展条款，返回带 refs 的节点集合。
+
+        步骤：
+        1. 从种子条款开始做 BFS；
+        2. 每跳沿 policy_edges 找目标条款；
+        3. 同时带上父条款，保留章节适用范围；
+        4. 批量取回全部条款；
+        5. 附带每条条款的 references 列表。
+        """
+        # 步骤 1：初始化已访问集合和当前扩展前沿。
         visited = set(seed_ids)
         frontier = set(seed_ids)
 
+        # 步骤 2/3：逐跳扩展引用、例外边，并向上补父条款。
         for _ in range(hops):
             if not frontier:
                 break
@@ -158,11 +168,15 @@ class PolicyStore:
 
         if not visited:
             return []
+
+        # 步骤 4：一次取回所有命中条款。
         placeholders = ",".join("?" for _ in visited)
         rows = await self.db.fetchall(
             f"SELECT * FROM policy_clauses WHERE clause_id IN ({placeholders}) ORDER BY path",
             tuple(visited),
         )
+
+        # 步骤 5：补齐每个条款的引用列表，方便前端展示依据。
         edge_rows = await self.db.fetchall(
             f"SELECT source_id, target_id FROM policy_edges "
             f"WHERE relation = 'references' AND source_id IN ({placeholders})",

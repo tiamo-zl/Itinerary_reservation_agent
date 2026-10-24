@@ -60,9 +60,13 @@ def _load_json(text: str) -> dict:
 def _parse_relative_date(value, today: date):
     """把“下周二/明天/3天后”等常见表达转成 ISO 日期。
 
-    模型即使被要求输出 YYYY-MM-DD，也可能保留自然语言日期；
-    这里只处理 demo 覆盖得到的表达，无法识别时原样返回。
+    步骤：
+    1. ISO 日期和今天/明天/后天直接换算；
+    2. “下/本/这 + 周X”按周一基准计算；
+    3. “N天后”按偏移量计算；
+    4. 无法识别时原样返回，由后续校验决定是否追问。
     """
+    # 步骤 1：已经是 ISO 或常见短词。
     if not isinstance(value, str):
         return value
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
@@ -74,7 +78,7 @@ def _parse_relative_date(value, today: date):
     if value == "后天":
         return (today + timedelta(days=2)).isoformat()
 
-    # “下周X”以“下周一”为基准；“本周X”以“本周一”为基准；
+    # 步骤 2：“下周X”以“下周一”为基准；“本周X”以“本周一”为基准；
     # 不带前缀的“周X”取今天之后最近的一次。
     match = re.fullmatch(r"(下|本|这)?周([一二三四五六日天])", value)
     if match:
@@ -90,9 +94,12 @@ def _parse_relative_date(value, today: date):
             return (today + timedelta(days=delta)).isoformat()
         return (base + timedelta(days=target)).isoformat()
 
+    # 步骤 3：“N天后”按偏移量计算。
     match = re.fullmatch(r"(\d+)天后", value)
     if match:
         return (today + timedelta(days=int(match.group(1)))).isoformat()
+
+    # 步骤 4：无法识别时交给后续校验/追问。
     return value
 
 
@@ -132,6 +139,16 @@ def normalize_payload(raw: dict, today: date | None = None) -> dict:
 
 
 async def understand(state: dict, deps) -> dict:
+    """把自然语言需求转成 TripRequest。
+
+    步骤：
+    1. 构造带当天日期的解析提示词并调用轻量模型；
+    2. 解析 JSON，兼容代码块和字段别名；
+    3. 解析失败转追问，不带着空槽位继续；
+    4. 目的地仍为空时追问；
+    5. 成功则写回结构化需求。
+    """
+    # 步骤 1：构造模型上下文和解析提示词。
     ctx = CallContext(
         trace_id=state["trace_id"], tenant_id=state["tenant_id"],
         task_id=state["task_id"], purpose="understand",
@@ -150,6 +167,7 @@ async def understand(state: dict, deps) -> dict:
             response_schema=TripRequest.model_json_schema(),
         )
 
+    # 步骤 2/3：解析并归一化；失败转追问。
     try:
         raw = normalize_payload(_load_json(completion.text))
         request = TripRequest.model_validate(raw)
@@ -162,8 +180,10 @@ async def understand(state: dict, deps) -> dict:
         return {"status": "WAITING_HUMAN",
                 "pending_human": human.model_dump(mode="json")}
 
+    # 步骤 4：目的地是硬性槽位，缺失则追问。
     if not request.destination_city:
         human = HumanRequest(type=HumanRequestType.CLARIFY, message="请提供目的地。")
         return {"status": "WAITING_HUMAN",
                 "pending_human": human.model_dump(mode="json")}
+    # 步骤 5：写回结构化需求，进入后续规划。
     return {"request": request.model_dump(mode="json"), "status": "EXECUTING"}

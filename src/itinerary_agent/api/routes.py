@@ -62,8 +62,18 @@ def _is_admin(ctx) -> bool:
 
 
 def build_router(container) -> APIRouter:
+    """注册接入网关的全部路由。
+
+    路由按职责分组：
+    - 对话/任务：/chat、resume、任务状态与历史；
+    - 会话记录：/conversations、/sessions；
+    - 审批：/approvals、/admin/approvals；
+    - 反馈回流：/feedback、/badcases；
+    - 观测：/tasks/summary、/tasks/{id}/traces、/traces*。
+    """
     router = APIRouter()
 
+    # 对话入口：只做上下文、脱敏和 SSE，不持有业务状态。
     @router.post("/chat")
     async def chat(payload: ChatRequest, request: Request):
         # 请求体里的 session_id 优先级高于请求头；trace 由网关生成或透传。
@@ -81,6 +91,7 @@ def build_router(container) -> APIRouter:
 
         return EventSourceResponse(events())
 
+    # 人工恢复：复用任务 trace，并把用户决策转成图恢复 payload。
     @router.post("/tasks/{task_id}/resume")
     async def resume(task_id: str, decision: Decision, request: Request):
         # 恢复接口复用任务首次请求的 trace，保证流转图和回放是同一条链。
@@ -103,6 +114,7 @@ def build_router(container) -> APIRouter:
 
         return EventSourceResponse(events())
 
+    # 观测：任务聚合与按 task 查看 trace。
     @router.get("/tasks/summary")
     async def task_summaries(limit: int = 50):
         return {"tasks": await list_task_summaries(container.db, limit)}
@@ -123,6 +135,7 @@ def build_router(container) -> APIRouter:
         )
         return dict(row) if row else {"error": "not found"}
 
+    # 会话记录：审批人看全部，员工只看自己。
     @router.get("/conversations")
     async def conversations(request: Request, limit: int = 100):
         # 审批人/管理员看全部会话；普通员工只看自己的。
@@ -157,7 +170,17 @@ def build_router(container) -> APIRouter:
 
     @router.get("/conversations/{session_id}")
     async def conversation_detail(session_id: str, request: Request):
+        """会话详情。
+
+        步骤：
+        1. 查该会话的所有 task；
+        2. 校验查看权限（管理员或会话所属员工）；
+        3. 取最新 task 的 Checkpoint 当前状态；
+        4. 返回消息、任务列表和当前进展。
+        """
         ctx = build_context(request)
+
+        # 步骤 1：会话 → 消息 → 任务。
         tasks = await container.db.fetchall(
             "SELECT DISTINCT t.task_id, t.trace_id, t.status, t.revision, "
             "t.updated_at, t.user_id, t.tenant_id "
@@ -167,11 +190,14 @@ def build_router(container) -> APIRouter:
         )
         if not tasks:
             return JSONResponse(status_code=404, content={"error": "not found"})
+
+        # 步骤 2：员工不能读取他人的会话。
         if not _is_admin(ctx) and all(
             row["user_id"] != ctx.user_id for row in tasks
         ):
             return JSONResponse(status_code=403, content={"error": "forbidden"})
 
+        # 步骤 3：取最新任务的当前进展。
         latest_task = dict(tasks[0])
         latest_state = None
         try:
@@ -180,6 +206,7 @@ def build_router(container) -> APIRouter:
             )
         except Exception:  # noqa: BLE001 - 详情页允许状态缺失
             latest_state = None
+        # 步骤 4：返回详情结构。
         return {
             "session_id": session_id,
             "messages": await container.orchestrator.get_messages(session_id),

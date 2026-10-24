@@ -115,7 +115,16 @@ def _percentile(values: list[float], ratio: float) -> float:
 
 
 async def trace_overview(db: Database) -> dict:
-    """线上概览：请求、延迟、错误、模型成本、审批和 badcase。"""
+    """线上概览：请求、延迟、错误、模型成本、审批和 badcase。
+
+    步骤：
+    1. 汇总 trace/span 总量、错误率和 P95；
+    2. 按 layer 聚合延迟；
+    3. 汇总模型调用 token/成本；
+    4. 汇总审批、任务、badcase 状态；
+    5. 附带最近 trace 方便跳转。
+    """
+    # 步骤 1：全局 totals 与 P95。
     totals_row = await db.fetchone(
         "SELECT COUNT(DISTINCT trace_id) AS traces, COUNT(*) AS spans, "
         "SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors, "
@@ -131,6 +140,7 @@ async def trace_overview(db: Database) -> dict:
     )
     totals["p95_duration_ms"] = _percentile(durations, 0.95)
 
+    # 步骤 2：按层聚合 span 数量和平均延迟。
     layers = [
         dict(row)
         for row in await db.fetchall(
@@ -141,12 +151,14 @@ async def trace_overview(db: Database) -> dict:
         )
     ]
 
+    # 步骤 3：模型调用账本聚合。
     llm = dict(await db.fetchone(
         "SELECT COUNT(*) AS calls, "
         "COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, "
         "COALESCE(SUM(completion_tokens), 0) AS completion_tokens, "
         "COALESCE(SUM(cost_usd), 0) AS cost_usd FROM llm_calls"
     ))
+    # 步骤 4：审批、任务、badcase 状态分布。
     approvals = [
         dict(row)
         for row in await db.fetchall(
@@ -166,6 +178,7 @@ async def trace_overview(db: Database) -> dict:
         )
     ]
 
+    # 步骤 5：返回概览数据，前端可继续按 task 查看 trace。
     return {
         "totals": totals,
         "layers": layers,

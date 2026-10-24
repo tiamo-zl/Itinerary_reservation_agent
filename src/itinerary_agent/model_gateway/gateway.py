@@ -42,8 +42,21 @@ class OpenAIChatGateway:
 
     async def complete(self, ctx: CallContext, messages: list[dict],
                        tier: ModelTier, response_schema: dict | None = None) -> Completion:
+        """执行一次聊天补全。
+
+        步骤：
+        1. 按 tier 解析真实模型；
+        2. 需要 JSON 时追加格式约束；
+        3. 查询确定性缓存；
+        4. 通过 OpenAI 兼容客户端调用模型并记录 span；
+        5. 写回缓存和 token/成本账本；
+        6. 返回统一 Completion。
+        """
+        # 步骤 1：档位路由到具体模型。
         model = resolve_model(self.settings, tier.value)
         messages = list(messages)
+
+        # 步骤 2：需要结构化输出时，提示模型只返回 JSON。
         if response_schema:
             messages.append({
                 "role": "user",
@@ -54,7 +67,7 @@ class OpenAIChatGateway:
         if response_schema:
             kwargs["response_format"] = {"type": "json_object"}
 
-        # 只缓存确定性高的用途；规划类请求随上下文变化，缓存收益低且易失效。
+        # 步骤 3：只缓存确定性高的用途；规划类请求不缓存。
         cacheable = ctx.purpose in {"classify", "understand"}
         cache_key = hashlib.sha256(
             json.dumps(
@@ -70,6 +83,7 @@ class OpenAIChatGateway:
             if row:
                 return Completion.model_validate_json(row["value"])
 
+        # 步骤 4：通过唯一出口调用模型，并记录 model span。
         span = (
             self.traces.span(
                 f"model.{ctx.purpose}", "model",
@@ -88,6 +102,7 @@ class OpenAIChatGateway:
             completion_tokens=usage.completion_tokens if usage else 0,
         )
 
+        # 步骤 5：写回缓存和调用账本；cost 由后续价格表补全。
         if self.db is not None:
             if cacheable:
                 await self.db.execute(
@@ -95,7 +110,6 @@ class OpenAIChatGateway:
                     "VALUES (?, ?, ?)",
                     (cache_key, result.model_dump_json(), datetime.now(UTC).isoformat()),
                 )
-            # cost_usd 暂时记 0，后续接入价格表后按模型/租户补全。
             await self.db.execute(
                 "INSERT INTO llm_calls (call_id, trace_id, task_id, tenant_id, purpose, "
                 "model, prompt_tokens, completion_tokens, cost_usd, duration_ms, created_at) "
@@ -106,6 +120,7 @@ class OpenAIChatGateway:
                     result.cost_usd, 0.0, datetime.now(UTC).isoformat(),
                 ),
             )
+        # 步骤 6：返回统一结构。
         return result
 
     async def stream(self, ctx: CallContext, messages: list[dict], tier: ModelTier):

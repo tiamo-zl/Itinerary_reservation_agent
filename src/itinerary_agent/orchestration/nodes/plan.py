@@ -11,7 +11,14 @@ SYSTEM = (
 
 
 async def plan(state: dict, deps) -> dict:
-    # 规划前检索制度依据；图状态只保存引用 ID，不保存制度原文。
+    """生成执行计划。
+
+    步骤：
+    1. 先检索制度，得到 citation 引用；
+    2. 调模型生成步骤建议；
+    3. 解析 JSON；失败时降级为默认查询步骤。
+    """
+    # 步骤 1：规划前检索制度依据；状态只保存引用 ID。
     refs: list[str] = []
     if deps.knowledge is not None:
         async with deps.span(
@@ -23,6 +30,7 @@ async def plan(state: dict, deps) -> dict:
             )
         refs = [clause.clause_id for clause in context.clauses]
 
+    # 步骤 2：调用大模型生成计划。
     ctx = CallContext(
         trace_id=state["trace_id"], tenant_id=state["tenant_id"],
         task_id=state["task_id"], purpose="plan",
@@ -37,8 +45,8 @@ async def plan(state: dict, deps) -> dict:
         ]
         completion = await deps.model.complete(ctx, messages, deps.tier_reasoning)
 
-    # 模型输出只用于“建议步骤”，不是执行依据；解析失败时退化为默认查询步骤，
-    # 后续 search/policy 节点仍会按确定性代码继续执行。
+    # 步骤 3：模型输出只用于“建议步骤”，不是执行依据；
+    # 解析失败时退化为默认查询步骤，后续 search/policy 仍按确定性代码执行。
     try:
         text = completion.text.strip()
         start, end = text.find("{"), text.rfind("}")

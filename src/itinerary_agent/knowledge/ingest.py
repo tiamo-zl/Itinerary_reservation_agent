@@ -14,9 +14,20 @@ from itinerary_agent.knowledge.structure import (
 
 async def ingest_bundle(bundle: PolicyBundle, policy_store, clause_store,
                         embedder) -> int:
+    """把一份结构化制度写入 SQLite 和 Milvus。
+
+    步骤：
+    1. 校验条款树/引用/表格完整性；
+    2. 写入条款；
+    3. 解析引用并写入边，未解析引用进入人工校对；
+    4. 写入表格；
+    5. 生成条款向量并写入 Milvus。
+    """
+    # 步骤 1：入库前校验，避免悬空引用/表格。
     validate_bundle(bundle)
     await policy_store.init()
 
+    # 步骤 2：逐条写入结构化条款。
     for clause in bundle.clauses:
         await policy_store.upsert_clause({
             "clause_id": clause.clause_id, "tenant_id": bundle.tenant_id,
@@ -28,16 +39,18 @@ async def ingest_bundle(bundle: PolicyBundle, policy_store, clause_store,
             "effective_to": bundle.effective_to, "order_no": clause.order_no,
         })
 
+    # 步骤 3：解析 ID 引用和文本引用；失败的引用进入人工校对队列。
     edges, unresolved = resolve_references(bundle)
     for source, relation, target in edges:
         await policy_store.add_edge(source, relation, target)
     for clause_id, ref_text in unresolved:
         await policy_store.add_review(clause_id, ref_text, "unresolved_reference")
 
+    # 步骤 4：表格保持结构化存储，不做文本切分。
     for table in bundle.tables:
         await policy_store.upsert_table(table)
 
-    # embedding 文本带路径和标题，帮助模型区分同名条款。
+    # 步骤 5：条款级 embedding；文本带路径和标题，帮助区分同名条款。
     texts = [f"{clause.path} {clause.title} {clause.text}" for clause in bundle.clauses]
     call_ctx = CallContext(
         trace_id="ingest", tenant_id=bundle.tenant_id, purpose="embed"

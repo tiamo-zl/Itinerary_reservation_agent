@@ -149,14 +149,21 @@ class OrchestrationService:
     async def start_turn(self, ctx: RequestContext, message: str) -> AsyncIterator[Event]:
         """开始一轮对话并流式产出事件。
 
-        astream(stream_mode="updates") 每个节点完成时产出一项；
-        interrupt 会以 "__interrupt__" 键出现，M2 再转换成等待用户的 SSE。
+        步骤：
+        1. 初始化任务状态、trace/task 上下文；
+        2. 记录用户消息和任务索引；
+        3. 流式执行图，逐节点产出 progress；
+        4. interrupt 时落状态并产出 interrupt 事件；
+        5. 结束后更新最终状态、记录助手摘要并产出 result。
         """
+        # 步骤 1：初始化状态并绑定 trace/task 上下文。
         state = initial_state(ctx, message)
         config = {"configurable": {"thread_id": state["task_id"]}}
         if self.traces is not None:
             self.traces.start_trace(state["trace_id"])
             self.traces.set_task(state["task_id"])
+
+        # 步骤 2：持久化用户消息和任务索引。
         if self.memory is not None:
             await self.memory.append_message(
                 ctx.session_id, state["task_id"], "user", message
@@ -168,6 +175,7 @@ class OrchestrationService:
             "status": "PLANNING",
         })
 
+        # 步骤 3/4：流式执行图，区分 progress 和 interrupt。
         interrupted_status: str | None = None
         async for update in self.graph.astream(state, config=config, stream_mode="updates"):
             for node, value in update.items():
@@ -189,6 +197,7 @@ class OrchestrationService:
                         data={"task_id": state["task_id"], "node": node},
                     )
 
+        # 步骤 5：落最终状态/摘要，返回 result。
         final = await self.graph.aget_state(config)
         final_status = interrupted_status or final.values["status"]
         if interrupted_status is None:
@@ -264,14 +273,24 @@ class OrchestrationService:
                      decision: Decision) -> AsyncIterator[Event]:
         """从 Checkpoint 恢复被 interrupt 的任务。
 
-        M2 只处理确认/取消；M3 增加修改请求，M4 增加审批结果。
+        步骤：
+        1. 绑定任务 trace/task 上下文；
+        2. 处理 pause/cancel 两个终止类动作；
+        3. 处理 modify：更新需求/revision 后重新规划；
+        4. 普通恢复前确认 Checkpoint 现场存在；
+        5. 构造审批或确认恢复 payload；
+        6. 流式恢复图并产出 progress/interrupt；
+        7. 更新最终状态、记录摘要并产出 result。
         """
         from langgraph.types import Command
 
+        # 步骤 1：恢复必须沿用任务 trace，避免孤立 trace。
         config = {"configurable": {"thread_id": task_id}}
         if self.traces is not None:
             self.traces.start_trace(ctx.trace_id)
             self.traces.set_task(task_id)
+
+        # 步骤 2：pause/cancel 不恢复图，直接写终态。
         if decision.action == "pause":
             # 暂停不销毁现场；后续 continue 仍从同一个 interrupt 恢复。
             await self._set_task_status(task_id, "PAUSED")
@@ -282,8 +301,9 @@ class OrchestrationService:
             yield Event(type="result", data={"task_id": task_id, "trace_id": ctx.trace_id, "status": "CANCELLED"})
             return
 
+        # 步骤 3：修改需求时先更新 Checkpoint，再让 confirm 重新路由。
         if decision.action == "modify" and decision.amended_request is not None:
-            # 先更新 Checkpoint 中的需求与 revision，再恢复 confirm 节点。
+            # 校验现场可见后，清空旧选项/旧审批/旧确认，并 revision++。
             snapshot = await self._await_interrupted_state(config)
             if not snapshot.values or not snapshot.next:
                 yield Event(type="error", data={
@@ -295,6 +315,7 @@ class OrchestrationService:
             amended = apply_amendment(snapshot.values, decision.amended_request)
             await self.graph.aupdate_state(config, amended)
 
+            # 修改后的图会重新 plan → search → policy，可能再次 interrupt。
             yield Event(type="status", data={"task_id": task_id, "trace_id": ctx.trace_id, "status": "PLANNING"})
             interrupted_status: str | None = None
             async for update in self.graph.astream(
@@ -335,8 +356,7 @@ class OrchestrationService:
             )
             return
 
-        # Checkpoint 刚写完时极短时间内可能不可见；先确认现场存在，
-        # 避免 Command 从空状态重新跑 understand。
+        # 步骤 4：Checkpoint 刚写完时短时间内可能不可见，先确认现场存在。
         snapshot = await self._await_interrupted_state(config)
         if not snapshot.values or not snapshot.next:
             yield Event(type="error", data={
@@ -346,14 +366,15 @@ class OrchestrationService:
             })
             return
 
+        # 步骤 5：审批恢复只传 status/comment；确认/修改传完整 Decision。
         payload = decision.model_dump()
         if decision.approval_status is not None:
-            # 审批轮询只传 approval_status；节点需要的是简单 status 字段。
             payload = {
                 "status": decision.approval_status.value,
                 "comment": decision.comment or "",
             }
 
+        # 步骤 6：从 interrupt 现场继续流式执行。
         yield Event(type="status", data={"task_id": task_id, "trace_id": ctx.trace_id, "status": "EXECUTING"})
         interrupted_status: str | None = None
         async for update in self.graph.astream(
@@ -378,6 +399,7 @@ class OrchestrationService:
                         data={"task_id": task_id, "trace_id": ctx.trace_id, "node": node},
                     )
 
+        # 步骤 7：落最终状态/摘要，返回 result。
         final = await self.graph.aget_state(config)
         final_status = interrupted_status or final.values["status"]
         if interrupted_status is None:
