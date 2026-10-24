@@ -104,6 +104,71 @@ def build_router(container) -> APIRouter:
         )
         return dict(row) if row else {"error": "not found"}
 
+    @router.get("/conversations")
+    async def conversations(request: Request, limit: int = 100):
+        # 审批人/管理员看全部会话；普通员工只看自己的。
+        ctx = build_context(request)
+        where = "" if _is_admin(ctx) else "WHERE t.user_id = ?"
+        params = () if _is_admin(ctx) else (ctx.user_id,)
+        rows = await container.db.fetchall(
+            "SELECT m.session_id, COUNT(*) AS message_count, "
+            "MAX(m.created_at) AS updated_at, "
+            "(SELECT content FROM messages m2 WHERE m2.session_id = m.session_id "
+            " ORDER BY m2.id DESC LIMIT 1) AS last_message, "
+            "(SELECT role FROM messages m2 WHERE m2.session_id = m.session_id "
+            " ORDER BY m2.id DESC LIMIT 1) AS last_role, "
+            "MAX(t.user_id) AS user_id, MAX(t.tenant_id) AS tenant_id "
+            f"FROM messages m JOIN tasks t ON t.task_id = m.task_id "
+            f"{where} GROUP BY m.session_id "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (*params, limit),
+        )
+        result = []
+        for row in rows:
+            item = dict(row)
+            latest = await container.db.fetchone(
+                "SELECT t.task_id, t.trace_id, t.status, t.revision, t.updated_at "
+                "FROM tasks t JOIN messages m ON m.task_id = t.task_id "
+                "WHERE m.session_id = ? ORDER BY t.updated_at DESC LIMIT 1",
+                (item["session_id"],),
+            )
+            item["latest_task"] = dict(latest) if latest else None
+            result.append(item)
+        return {"conversations": result}
+
+    @router.get("/conversations/{session_id}")
+    async def conversation_detail(session_id: str, request: Request):
+        ctx = build_context(request)
+        tasks = await container.db.fetchall(
+            "SELECT DISTINCT t.task_id, t.trace_id, t.status, t.revision, "
+            "t.updated_at, t.user_id, t.tenant_id "
+            "FROM tasks t JOIN messages m ON m.task_id = t.task_id "
+            "WHERE m.session_id = ? ORDER BY t.updated_at DESC",
+            (session_id,),
+        )
+        if not tasks:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        if not _is_admin(ctx) and all(
+            row["user_id"] != ctx.user_id for row in tasks
+        ):
+            return JSONResponse(status_code=403, content={"error": "forbidden"})
+
+        latest_task = dict(tasks[0])
+        latest_state = None
+        try:
+            latest_state = await container.orchestrator.get_state(
+                latest_task["task_id"]
+            )
+        except Exception:  # noqa: BLE001 - 详情页允许状态缺失
+            latest_state = None
+        return {
+            "session_id": session_id,
+            "messages": await container.orchestrator.get_messages(session_id),
+            "tasks": [dict(row) for row in tasks],
+            "latest_task": latest_task,
+            "latest_state": latest_state,
+        }
+
     @router.get("/sessions")
     async def sessions(request: Request, limit: int = 50):
         # 会话来自 messages；任务状态通过 task_id 关联，供历史列表显示进展。

@@ -6,6 +6,7 @@ const proxied = [
   '/chat',
   '/tasks',
   '/sessions',
+  '/conversations',
   '/traces',
   '/approvals',
   '/admin',

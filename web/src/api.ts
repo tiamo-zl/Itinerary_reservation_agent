@@ -96,6 +96,29 @@ export interface ChatMessage {
   created_at?: string
 }
 
+export interface ConversationSummary extends SessionSummary {
+  user_id: string | null
+  tenant_id: string | null
+}
+
+export interface ConversationTask {
+  task_id: string
+  trace_id: string | null
+  status: string
+  revision: number
+  updated_at: string
+  user_id: string
+  tenant_id: string
+}
+
+export interface ConversationDetail {
+  session_id: string
+  messages: ChatMessage[]
+  tasks: ConversationTask[]
+  latest_task: ConversationTask
+  latest_state: TaskState | null
+}
+
 export interface SessionSummary {
   session_id: string
   message_count: number

@@ -11,6 +11,7 @@ import { RouterLink, RouterView } from 'vue-router'
       </div>
       <nav class="nav" aria-label="主导航">
         <RouterLink to="/">对话</RouterLink>
+        <RouterLink to="/conversations">对话记录</RouterLink>
         <RouterLink to="/approvals">审批</RouterLink>
         <RouterLink to="/trace">Trace 回放</RouterLink>
         <RouterLink to="/overview">线上概览</RouterLink>

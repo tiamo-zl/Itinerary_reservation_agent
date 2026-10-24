@@ -214,6 +214,8 @@ textarea { resize: vertical; }
 .table th { color: var(--muted); font-size: 12px; font-weight: 600; }
 .table tr:last-child td { border-bottom: none; }
 .table tbody tr:hover { background: var(--surface-2); }
+.conversation-row { cursor: pointer; }
+.conversation-row.active { background: var(--accent-soft); }
 
 .trace-row {
   display: grid;

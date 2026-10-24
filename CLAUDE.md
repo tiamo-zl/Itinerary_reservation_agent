@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 当前进度：
 
 - **M0–M5 已完成**：七层骨架、网关与编排、工具/库存、模型网关与制度检索、差标/审批/下单、Trace 与 12 个端到端场景。
-- **观测控制台**：`web/`（Vue 3 + Vite）提供聊天、审批工作台、trace 回放、线上概览；后端提供 trace 列表/概览、Checkpoint 历史、反馈与 badcase 回流。
+- **观测控制台**：`web/`（Vue 3 + Vite）提供聊天、对话记录、审批工作台、trace 回放、线上概览；后端提供 trace 列表/概览、Checkpoint 历史、反馈与 badcase 回流。
 - **评测集 harness**：`tests/eval/`，JSONL 用例覆盖槽位、差标和场景清单。
 - 默认 `MODEL_MODE=scripted`、`ADAPTER_MODE=mock`，完全离线可运行。
 - live 模式已用 DeepSeek + DashScope + 本地 Milvus 完成主链路、审批与修改需求联调。

@@ -74,6 +74,7 @@ Vite 会把 `/chat`、`/tasks`、`/traces`、`/admin`、`/feedback`、`/badcases
 页面：
 
 - `/`：差旅助手对话，支持确认、修改需求；审批与对话分离
+- `/conversations`：全部对话记录，点击查看消息历史、任务和当前进展
 - `/approvals`：审批工作台，展示待审批任务的差旅需求、超标明细和候选方案
 - `/trace`：输入 `trace_id` 查看调用树和 Checkpoint 状态历史，并提交反馈
 - `/overview`：错误率、分层延迟、模型 token/成本、最近 trace 和 badcase
