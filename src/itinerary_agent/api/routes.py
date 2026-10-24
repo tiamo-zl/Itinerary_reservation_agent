@@ -18,6 +18,7 @@ from itinerary_agent.api.context import build_context
 from itinerary_agent.api.pii import scrub
 from itinerary_agent.api.sse import to_sse
 from itinerary_agent.domain.models import Decision
+from itinerary_agent.observability.flow import build_flow
 from itinerary_agent.observability.query import (
     list_traces,
     load_trace_tree,
@@ -80,8 +81,13 @@ def build_router(container) -> APIRouter:
 
     @router.post("/tasks/{task_id}/resume")
     async def resume(task_id: str, decision: Decision, request: Request):
-        # 恢复接口同样使用 SSE，客户端可以继续看到后续节点进度。
+        # 恢复接口复用任务首次请求的 trace，保证流转图和回放是同一条链。
         ctx = build_context(request)
+        task = await container.db.fetchone(
+            "SELECT trace_id FROM tasks WHERE task_id = ?", (task_id,)
+        )
+        if task and task["trace_id"]:
+            ctx.trace_id = task["trace_id"]
         container.traces.start_trace(ctx.trace_id)
 
         async def events():
@@ -367,6 +373,27 @@ def build_router(container) -> APIRouter:
     async def traces_overview():
         # 固定路径必须放在 /traces/{trace_id} 之前。
         return await trace_overview(container.db)
+
+    @router.get("/traces/{trace_id}/flow")
+    async def trace_flow(trace_id: str):
+        spans = await container.db.fetchall(
+            "SELECT name, status, start_time FROM spans "
+            "WHERE trace_id = ? AND layer = 'orchestration' "
+            "ORDER BY start_time",
+            (trace_id,),
+        )
+        task = await container.db.fetchone(
+            "SELECT task_id, status FROM tasks WHERE trace_id = ? "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (trace_id,),
+        )
+        flow = build_flow([dict(span) for span in spans])
+        flow.update({
+            "trace_id": trace_id,
+            "task_id": task["task_id"] if task else None,
+            "task_status": task["status"] if task else None,
+        })
+        return flow
 
     @router.get("/traces/{trace_id}")
     async def trace_json(trace_id: str):

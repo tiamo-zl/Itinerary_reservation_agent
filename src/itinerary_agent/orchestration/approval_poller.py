@@ -33,7 +33,8 @@ class ApprovalPoller:
         while True:
             await asyncio.sleep(self.interval)
             rows = await self.db.fetchall(
-                "SELECT a.approval_id, a.task_id, a.status, t.tenant_id, t.user_id "
+                "SELECT a.approval_id, a.task_id, a.status, t.tenant_id, "
+                "t.user_id, t.trace_id "
                 "FROM approvals a JOIN tasks t ON t.task_id = a.task_id "
                 "WHERE t.status = 'WAITING_APPROVAL' "
                 "AND a.status IN ('approved', 'rejected')"
@@ -44,7 +45,7 @@ class ApprovalPoller:
                     (row["task_id"],),
                 )
                 ctx = RequestContext(
-                    trace_id=f"approval-{row['task_id']}",
+                    trace_id=row["trace_id"] or f"approval-{row['task_id']}",
                     tenant_id=row["tenant_id"],
                     user_id=row["user_id"],
                     session_id="approval",

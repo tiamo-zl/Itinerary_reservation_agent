@@ -9,19 +9,21 @@ from itinerary_agent.domain.models import HumanRequest, HumanRequestType
 
 
 async def request_approval(state: dict, deps) -> dict:
-    result = await deps.guarded_invoke(
-        state, "submit_approval", "submit_approval",
-        {
-            "task_id": state["task_id"],
-            "revision": state["revision"],
-            "payload": {
-                "request": state["request"],
-                "options": state["options"],
-                "policy_result": state.get("policy_result"),
+    # span 在 interrupt 前结束，避免审批等待期间一直挂着一个未完成的 span。
+    async with deps.span("orchestration.node.approval", "orchestration"):
+        result = await deps.guarded_invoke(
+            state, "submit_approval", "submit_approval",
+            {
+                "task_id": state["task_id"],
                 "revision": state["revision"],
+                "payload": {
+                    "request": state["request"],
+                    "options": state["options"],
+                    "policy_result": state.get("policy_result"),
+                    "revision": state["revision"],
+                },
             },
-        },
-    )
+        )
     if not result.ok:
         return {"status": "FAILED", "error": result.error.model_dump()}
 

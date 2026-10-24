@@ -13,6 +13,7 @@ import { RouterLink, RouterView } from 'vue-router'
         <RouterLink to="/">对话</RouterLink>
         <RouterLink to="/conversations">对话记录</RouterLink>
         <RouterLink to="/approvals">审批</RouterLink>
+        <RouterLink to="/flow">流转图</RouterLink>
         <RouterLink to="/trace">Trace 回放</RouterLink>
         <RouterLink to="/overview">线上概览</RouterLink>
       </nav>

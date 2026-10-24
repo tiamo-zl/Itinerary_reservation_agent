@@ -134,6 +134,40 @@ export interface SessionSummary {
   } | null
 }
 
+export interface FlowNode {
+  id: string
+  label: string
+}
+
+export interface FlowEdge {
+  id: string
+  source: string
+  target: string
+  label: string
+  condition: string
+}
+
+export type FlowStep =
+  | { kind: 'node'; node: string; label: string; status: string; at: string }
+  | {
+      kind: 'edge'
+      id: string
+      source: string
+      target: string
+      label: string
+      condition: string
+      at: string
+    }
+
+export interface TraceFlow {
+  trace_id: string
+  task_id: string | null
+  task_status: string | null
+  nodes: FlowNode[]
+  edges: FlowEdge[]
+  timeline: FlowStep[]
+}
+
 export interface OverviewData {
   totals: {
     traces: number

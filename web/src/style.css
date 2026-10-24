@@ -316,6 +316,30 @@ textarea { resize: vertical; }
 .progress-step.done .progress-dot { border-color: var(--good); background: var(--good-soft); }
 .progress-step.active .progress-dot { border-color: var(--accent); background: var(--accent-soft); }
 
+.flow-scroll { overflow-x: auto; padding-bottom: 8px; }
+.flow-svg { width: 100%; min-width: 1050px; height: auto; color: var(--muted); }
+.flow-edge {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2;
+  color: var(--border);
+}
+.flow-edge.visited { stroke: var(--accent); color: var(--accent); }
+.flow-edge.active { stroke: var(--good); color: var(--good); stroke-width: 3; }
+.flow-node rect {
+  fill: var(--surface);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+.flow-node text { fill: var(--muted); font-size: 13px; font-weight: 600; }
+.flow-node.visited rect { fill: var(--accent-soft); stroke: var(--accent); }
+.flow-node.visited text { fill: var(--accent); }
+.flow-node.active rect { fill: var(--good-soft); stroke: var(--good); stroke-width: 2.5; }
+.flow-node.active text { fill: var(--good); }
+.event.edge-active { border-color: var(--accent); background: var(--accent-soft); }
+.event.timeline-current { border-color: var(--accent); background: var(--accent-soft); }
+.event.timeline-future { opacity: 0.45; }
+
 .event-list { display: grid; gap: 8px; max-height: 300px; overflow: auto; }
 .event {
   border: 1px solid var(--border);
