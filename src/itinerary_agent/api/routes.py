@@ -4,6 +4,10 @@
 它不直接调用工具或模型，也不保存 LangGraph 状态。
 """
 
+from datetime import UTC, datetime
+from typing import Literal
+from uuid import uuid4
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
@@ -13,7 +17,11 @@ from itinerary_agent.api.context import build_context
 from itinerary_agent.api.pii import scrub
 from itinerary_agent.api.sse import to_sse
 from itinerary_agent.domain.models import Decision
-from itinerary_agent.observability.query import load_trace_tree
+from itinerary_agent.observability.query import (
+    list_traces,
+    load_trace_tree,
+    trace_overview,
+)
 
 
 class ChatRequest(BaseModel):
@@ -23,6 +31,30 @@ class ChatRequest(BaseModel):
 
 class AdminDecision(BaseModel):
     comment: str = ""
+
+
+class FeedbackRequest(BaseModel):
+    trace_id: str
+    task_id: str | None = None
+    category: Literal[
+        "understand", "plan", "tool", "policy", "rag",
+        "approval", "booking", "other",
+    ] = "other"
+    severity: Literal["low", "medium", "high"] = "medium"
+    user_input: str = ""
+    expected: str = ""
+    actual: str = ""
+    comment: str = ""
+
+
+class BadcaseUpdate(BaseModel):
+    status: Literal["open", "reproduced", "fixed", "closed"] | None = None
+    root_cause: str | None = None
+    comment: str | None = None
+
+
+def _is_admin(ctx) -> bool:
+    return "admin" in ctx.roles or "approver" in ctx.roles
 
 
 def build_router(container) -> APIRouter:
@@ -65,15 +97,86 @@ def build_router(container) -> APIRouter:
     @router.get("/tasks/{task_id}")
     async def get_task(task_id: str):
         row = await container.db.fetchone(
-            "SELECT task_id, status, revision FROM tasks WHERE task_id = ?",
+            "SELECT task_id, trace_id, status, revision, updated_at "
+            "FROM tasks WHERE task_id = ?",
             (task_id,),
         )
         return dict(row) if row else {"error": "not found"}
 
+    @router.get("/tasks/{task_id}/history")
+    async def task_history(task_id: str, limit: int = 100):
+        # Checkpoint 历史用于“状态级回放”，和 trace 的调用树互补。
+        return {
+            "task_id": task_id,
+            "history": await container.orchestrator.get_history(task_id, limit),
+        }
+
+    @router.post("/feedback")
+    async def feedback(payload: FeedbackRequest, request: Request):
+        # 反馈入口不做强鉴权，但必须脱敏；tenant 从 mock 上下文取。
+        ctx = build_context(request)
+        badcase_id = uuid4().hex
+        now = datetime.now(UTC).isoformat()
+        await container.db.execute(
+            "INSERT INTO badcases (badcase_id, trace_id, task_id, tenant_id, "
+            "category, severity, user_input, expected, actual, comment, status, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                badcase_id, payload.trace_id, payload.task_id, ctx.tenant_id,
+                payload.category, payload.severity,
+                scrub(payload.user_input), scrub(payload.expected),
+                scrub(payload.actual), scrub(payload.comment),
+                "open", now, now,
+            ),
+        )
+        return {"badcase_id": badcase_id, "status": "open"}
+
+    @router.get("/badcases")
+    async def list_badcases(request: Request, status: str | None = None,
+                            limit: int = 50):
+        ctx = build_context(request)
+        if not _is_admin(ctx):
+            return JSONResponse(status_code=403, content={"error": "forbidden"})
+        if status:
+            rows = await container.db.fetchall(
+                "SELECT * FROM badcases WHERE status = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (status, limit),
+            )
+        else:
+            rows = await container.db.fetchall(
+                "SELECT * FROM badcases ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        return {"badcases": [dict(row) for row in rows]}
+
+    @router.patch("/badcases/{badcase_id}")
+    async def update_badcase(badcase_id: str, payload: BadcaseUpdate,
+                             request: Request):
+        ctx = build_context(request)
+        if not _is_admin(ctx):
+            return JSONResponse(status_code=403, content={"error": "forbidden"})
+        row = await container.db.fetchone(
+            "SELECT badcase_id FROM badcases WHERE badcase_id = ?",
+            (badcase_id,),
+        )
+        if row is None:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+
+        updates = payload.model_dump(exclude_none=True)
+        if updates:
+            assignments = ", ".join(f"{key} = ?" for key in updates)
+            await container.db.execute(
+                f"UPDATE badcases SET {assignments}, updated_at = ? "
+                f"WHERE badcase_id = ?",
+                (*updates.values(), datetime.now(UTC).isoformat(), badcase_id),
+            )
+        return {"ok": True}
+
     @router.post("/admin/approvals/{approval_id}/approve")
     async def approve(approval_id: str, payload: AdminDecision, request: Request):
         ctx = build_context(request)
-        if "admin" not in ctx.roles and "approver" not in ctx.roles:
+        if not _is_admin(ctx):
             return JSONResponse(status_code=403, content={"error": "forbidden"})
         row = await container.db.fetchone(
             "SELECT approval_id FROM approvals WHERE approval_id = ?",
@@ -87,7 +190,7 @@ def build_router(container) -> APIRouter:
     @router.post("/admin/approvals/{approval_id}/reject")
     async def reject(approval_id: str, payload: AdminDecision, request: Request):
         ctx = build_context(request)
-        if "admin" not in ctx.roles and "approver" not in ctx.roles:
+        if not _is_admin(ctx):
             return JSONResponse(status_code=403, content={"error": "forbidden"})
         row = await container.db.fetchone(
             "SELECT approval_id FROM approvals WHERE approval_id = ?",
@@ -98,10 +201,26 @@ def build_router(container) -> APIRouter:
         await container.approvals.decide(approval_id, "rejected", payload.comment)
         return {"ok": True}
 
+    @router.get("/traces")
+    async def traces(limit: int = 50):
+        return {"traces": await list_traces(container.db, limit)}
+
+    @router.get("/traces/overview")
+    async def traces_overview():
+        # 固定路径必须放在 /traces/{trace_id} 之前。
+        return await trace_overview(container.db)
+
     @router.get("/traces/{trace_id}")
     async def trace_json(trace_id: str):
+        task = await container.db.fetchone(
+            "SELECT task_id, status FROM tasks WHERE trace_id = ? "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (trace_id,),
+        )
         return {
             "trace_id": trace_id,
+            "task_id": task["task_id"] if task else None,
+            "task_status": task["status"] if task else None,
             "spans": await load_trace_tree(container.db, trace_id),
         }
 

@@ -7,7 +7,6 @@ M0-M4 依次挂载基础设施、编排、工具、Checkpoint、制度检索、�
 from dataclasses import dataclass
 from pathlib import Path
 
-import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from itinerary_agent.infra.config import Settings
@@ -41,7 +40,6 @@ class Container:
     flight_inventory: object | None = None
     hotel_inventory: object | None = None
     user_directory: object | None = None
-    conn: aiosqlite.Connection | None = None
 
     async def start(self) -> None:
         await self.db.connect()
@@ -84,9 +82,10 @@ class Container:
             self.control = ControlService(self.rules, self.audit)
 
         # M2 起使用 SQLite Checkpoint；测试可注入 MemorySaver 跳过持久化。
+        # 复用业务库连接，避免两个 aiosqlite 连接同时写同一文件时出现
+        # checkpoint 尚未可见、resume 从空状态重新开始的竞态。
         if self.checkpointer is None:
-            self.conn = await aiosqlite.connect(self.settings.sqlite_path)
-            self.checkpointer = AsyncSqliteSaver(self.conn)
+            self.checkpointer = AsyncSqliteSaver(self.db.conn)
             await self.checkpointer.setup()
 
         # 没有显式注入 orchestrator 时，按当前依赖自动装配。
@@ -106,9 +105,6 @@ class Container:
         if self.approvals is not None:
             await self.approvals.stop()
         await self.db.close()
-        if self.conn is not None:
-            await self.conn.close()
-            self.conn = None
 
     async def _init_live_model_and_knowledge(self) -> None:
         """按 live 模式装配真实模型网关与制度检索。"""

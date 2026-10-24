@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   user_id TEXT NOT NULL,
   status TEXT NOT NULL,
   revision INTEGER NOT NULL DEFAULT 0,
+  trace_id TEXT,
   updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS messages (
@@ -109,6 +110,24 @@ CREATE TABLE IF NOT EXISTS idempotency (
   result TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+-- Badcase 回流：trace/task 关联 + 期望/实际 + 处理状态。
+CREATE TABLE IF NOT EXISTS badcases (
+  badcase_id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  task_id TEXT,
+  tenant_id TEXT NOT NULL,
+  category TEXT NOT NULL,
+  severity TEXT NOT NULL DEFAULT 'medium',
+  user_input TEXT NOT NULL DEFAULT '',
+  expected TEXT NOT NULL DEFAULT '',
+  actual TEXT NOT NULL DEFAULT '',
+  comment TEXT NOT NULL DEFAULT '',
+  root_cause TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_badcases_status ON badcases(status);
 """
 
 
@@ -127,7 +146,15 @@ class Database:
         # Row 工厂让查询结果可以按列名访问，避免依赖列顺序。
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(SCHEMA)
+        await self._migrate()
         await self._conn.commit()
+
+    async def _migrate(self) -> None:
+        """给已有 SQLite 文件补新增列；只做 additive migration。"""
+        async with self.conn.execute("PRAGMA table_info(tasks)") as cursor:
+            columns = {row["name"] for row in await cursor.fetchall()}
+        if "trace_id" not in columns:
+            await self.conn.execute("ALTER TABLE tasks ADD COLUMN trace_id TEXT")
 
     @property
     def conn(self) -> aiosqlite.Connection:

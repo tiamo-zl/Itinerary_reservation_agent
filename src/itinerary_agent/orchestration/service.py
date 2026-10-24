@@ -4,6 +4,7 @@
 M1 只实现 start_turn，M2 增加 interrupt/resume，M4 增加审批与下单。
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
@@ -92,11 +93,14 @@ class OrchestrationService:
         if self.db is None:
             return
         await self.db.execute(
-            "INSERT INTO tasks (task_id, tenant_id, user_id, status, revision, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(task_id) DO UPDATE SET "
-            "status=excluded.status, revision=excluded.revision, updated_at=excluded.updated_at",
+            "INSERT INTO tasks (task_id, tenant_id, user_id, status, revision, "
+            "trace_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(task_id) DO UPDATE SET "
+            "status=excluded.status, revision=excluded.revision, "
+            "trace_id=excluded.trace_id, updated_at=excluded.updated_at",
             (state["task_id"], state["tenant_id"], state["user_id"], status,
-             state["revision"], datetime.now(UTC).isoformat()),
+             state["revision"], state.get("trace_id"),
+             datetime.now(UTC).isoformat()),
         )
 
     async def _set_task_status(self, task_id: str, status: str) -> None:
@@ -146,7 +150,11 @@ class OrchestrationService:
         state = initial_state(ctx, message)
         config = {"configurable": {"thread_id": state["task_id"]}}
         await self._upsert_task(state, "PLANNING")
-        yield Event(type="status", data={"task_id": state["task_id"], "status": "PLANNING"})
+        yield Event(type="status", data={
+            "task_id": state["task_id"],
+            "trace_id": state["trace_id"],
+            "status": "PLANNING",
+        })
 
         interrupted_status: str | None = None
         async for update in self.graph.astream(state, config=config, stream_mode="updates"):
@@ -177,10 +185,35 @@ class OrchestrationService:
             type="result",
             data={
                 "task_id": state["task_id"],
+                "trace_id": state["trace_id"],
                 "status": final_status,
                 "summary": final.values.get("summary", ""),
             },
         )
+
+    async def get_history(self, task_id: str, limit: int = 100) -> list[dict]:
+        """读取 Checkpoint 历史，用于前端回放状态迁移。
+
+        历史按 LangGraph 返回顺序（最新在前）；只暴露状态摘要，
+        不额外读取制度原文或聊天全文。
+        """
+        config = {"configurable": {"thread_id": task_id}}
+        history: list[dict] = []
+        async for snapshot in self.graph.aget_state_history(config, limit=limit):
+            created_at = getattr(snapshot, "created_at", None)
+            if hasattr(created_at, "isoformat"):
+                created_at = created_at.isoformat()
+            history.append({
+                "values": dict(snapshot.values),
+                "next": list(snapshot.next),
+                "created_at": created_at,
+                "metadata": dict(snapshot.metadata or {}),
+                "checkpoint_id": (
+                    snapshot.config.get("configurable", {}).get("checkpoint_id")
+                    if getattr(snapshot, "config", None) else None
+                ),
+            })
+        return history
 
     async def resume(self, ctx: RequestContext, task_id: str,
                      decision: Decision) -> AsyncIterator[Event]:
@@ -194,11 +227,11 @@ class OrchestrationService:
         if decision.action == "pause":
             # 暂停不销毁现场；后续 continue 仍从同一个 interrupt 恢复。
             await self._set_task_status(task_id, "PAUSED")
-            yield Event(type="result", data={"task_id": task_id, "status": "PAUSED"})
+            yield Event(type="result", data={"task_id": task_id, "trace_id": ctx.trace_id, "status": "PAUSED"})
             return
         if decision.action == "cancel":
             await self._set_task_status(task_id, "CANCELLED")
-            yield Event(type="result", data={"task_id": task_id, "status": "CANCELLED"})
+            yield Event(type="result", data={"task_id": task_id, "trace_id": ctx.trace_id, "status": "CANCELLED"})
             return
 
         if decision.action == "modify" and decision.amended_request is not None:
@@ -207,7 +240,7 @@ class OrchestrationService:
             amended = apply_amendment(snapshot.values, decision.amended_request)
             await self.graph.aupdate_state(config, amended)
 
-            yield Event(type="status", data={"task_id": task_id, "status": "PLANNING"})
+            yield Event(type="status", data={"task_id": task_id, "trace_id": ctx.trace_id, "status": "PLANNING"})
             interrupted_status: str | None = None
             async for update in self.graph.astream(
                 Command(resume={"action": "modify"}),
@@ -225,21 +258,37 @@ class OrchestrationService:
                         await self._set_task_status(task_id, interrupted_status)
                         yield Event(
                             type="interrupt",
-                            data={"task_id": task_id,
+                            data={"task_id": task_id, "trace_id": ctx.trace_id,
                                   "human_request": interrupt_value},
                         )
                     else:
                         yield Event(
                             type="progress",
-                            data={"task_id": task_id, "node": node},
+                            data={"task_id": task_id, "trace_id": ctx.trace_id, "node": node},
                         )
             final = await self.graph.aget_state(config)
             final_status = interrupted_status or final.values["status"]
             # 修改会改变 revision；即使再次停在确认节点也要更新任务索引。
             await self._upsert_task(final.values, final_status)
             yield Event(
-                type="result", data={"task_id": task_id, "status": final_status}
+                type="result", data={"task_id": task_id, "trace_id": ctx.trace_id, "status": final_status}
             )
+            return
+
+        # Checkpoint 刚写完时极短时间内可能不可见；先确认现场存在，
+        # 避免 Command 从空状态重新跑 understand。
+        snapshot = await self.graph.aget_state(config)
+        for _ in range(5):
+            if snapshot.values and snapshot.next:
+                break
+            await asyncio.sleep(0.02)
+            snapshot = await self.graph.aget_state(config)
+        if not snapshot.values or not snapshot.next:
+            yield Event(type="error", data={
+                "task_id": task_id, "trace_id": ctx.trace_id,
+                "code": "CHECKPOINT_NOT_READY",
+                "message": "任务现场尚未就绪或已结束，无法恢复。",
+            })
             return
 
         payload = decision.model_dump()
@@ -250,7 +299,7 @@ class OrchestrationService:
                 "comment": decision.comment or "",
             }
 
-        yield Event(type="status", data={"task_id": task_id, "status": "EXECUTING"})
+        yield Event(type="status", data={"task_id": task_id, "trace_id": ctx.trace_id, "status": "EXECUTING"})
         interrupted_status: str | None = None
         async for update in self.graph.astream(
             Command(resume=payload), config=config, stream_mode="updates"
@@ -271,11 +320,11 @@ class OrchestrationService:
                 else:
                     yield Event(
                         type="progress",
-                        data={"task_id": task_id, "node": node},
+                        data={"task_id": task_id, "trace_id": ctx.trace_id, "node": node},
                     )
 
         final = await self.graph.aget_state(config)
         final_status = interrupted_status or final.values["status"]
         if interrupted_status is None:
             await self._upsert_task(final.values, final_status)
-        yield Event(type="result", data={"task_id": task_id, "status": final_status})
+        yield Event(type="result", data={"task_id": task_id, "trace_id": ctx.trace_id, "status": final_status})
