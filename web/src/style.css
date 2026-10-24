@@ -274,6 +274,11 @@ textarea { resize: vertical; }
   box-shadow: inset 3px 0 0 var(--trace);
 }
 .badge-trace { background: var(--trace-soft); color: var(--trace); border: 1px solid var(--trace); }
+.event.approval-highlight {
+  border-color: var(--trace);
+  background: var(--trace-soft);
+  box-shadow: inset 3px 0 0 var(--trace);
+}
 .message-role {
   color: var(--muted);
   font-size: 11px;

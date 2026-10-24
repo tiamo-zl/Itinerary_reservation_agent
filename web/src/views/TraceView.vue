@@ -12,6 +12,7 @@ import {
   type TaskState,
   type TraceDetail,
 } from '../api'
+import ApprovalSummary from '../components/ApprovalSummary.vue'
 import ChatTranscript from '../components/ChatTranscript.vue'
 
 const route = useRoute()
@@ -33,6 +34,8 @@ const feedback = ref({
   comment: '',
 })
 
+const hasApprovals = computed(() => approvals.value.length > 0)
+
 const flatSpans = computed(() => {
   const rows: Array<{ span: SpanNode; depth: number }> = []
   const walk = (nodes: SpanNode[], depth: number) => {
@@ -53,12 +56,6 @@ function statusClass(status: string) {
   if (status === 'error') return 'badge-bad'
   if (status === 'blocked') return 'badge-warn'
   return 'badge-good'
-}
-
-function approvalClass(status: string) {
-  if (status === 'rejected') return 'badge-bad'
-  if (status === 'approved') return 'badge-good'
-  return 'badge-warn'
 }
 
 async function load() {
@@ -209,40 +206,18 @@ onMounted(() => {
         <div class="small muted" style="margin-bottom: 8px">
           橙色为本 trace 对应任务的消息。
         </div>
-        <ChatTranscript :messages="messages" :active-task-id="detail.task_id" />
+        <ChatTranscript
+          :messages="messages"
+          :active-task-id="hasApprovals ? null : detail.task_id"
+        />
       </section>
 
       <section class="card">
         <h2>审批信息</h2>
-        <div v-if="approvals.length" class="event-list">
-          <div v-for="item in approvals" :key="item.approval_id" class="event">
-            <div class="row">
-              <span class="badge" :class="approvalClass(item.status)">
-                {{ item.status }}
-              </span>
-              <span class="mono small">{{ item.approval_id }}</span>
-            </div>
-            <div class="small muted" style="margin-top: 6px">
-              revision {{ item.revision }} · {{ item.created_at }}
-            </div>
-            <div v-if="item.comment" class="small">审批意见：{{ item.comment }}</div>
-            <details v-if="item.payload?.policy_result?.violations?.length">
-              <summary>超标明细</summary>
-              <div
-                v-for="(violation, index) in item.payload.policy_result.violations"
-                :key="index"
-                class="small"
-              >
-                {{ violation.rule_id }} · {{ violation.message }}
-              </div>
-            </details>
-            <details v-if="item.payload?.request">
-              <summary>差旅需求</summary>
-              <pre>{{ JSON.stringify(item.payload.request, null, 2) }}</pre>
-            </details>
-          </div>
+        <div class="small muted" style="margin-bottom: 8px">
+          有审批记录时，橙色高亮的是审批信息；聊天记录不再橙色高亮。
         </div>
-        <div v-else class="empty">该任务没有审批记录</div>
+        <ApprovalSummary :approvals="approvals" :highlight="hasApprovals" />
       </section>
     </div>
 

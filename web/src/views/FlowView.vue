@@ -4,6 +4,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import {
   getJson,
+  type ApprovalItem,
   type ChatMessage,
   type FlowEdge,
   type FlowNode,
@@ -11,6 +12,7 @@ import {
   type TaskState,
   type TraceFlow,
 } from '../api'
+import ApprovalSummary from '../components/ApprovalSummary.vue'
 import ChatTranscript from '../components/ChatTranscript.vue'
 
 const route = useRoute()
@@ -18,6 +20,7 @@ const router = useRouter()
 const traceId = ref(String(route.params.traceId || ''))
 const flow = ref<TraceFlow | null>(null)
 const messages = ref<ChatMessage[]>([])
+const approvals = ref<ApprovalItem[]>([])
 const stepIndex = ref(0)
 const playing = ref(false)
 const errorText = ref('')
@@ -36,6 +39,8 @@ const POS: Record<string, { x: number; y: number }> = {
 
 const NODE_WIDTH = 130
 const NODE_HEIGHT = 52
+
+const hasApprovals = computed(() => approvals.value.length > 0)
 
 const currentStep = computed<FlowStep | null>(() => {
   if (!flow.value) return null
@@ -140,6 +145,7 @@ async function load() {
   errorText.value = ''
   stepIndex.value = 0
   messages.value = []
+  approvals.value = []
   try {
     const data = await getJson<TraceFlow>(
       `/traces/${traceId.value.trim()}/flow`,
@@ -153,6 +159,14 @@ async function load() {
           `/sessions/${sessionId}/messages`,
         )
         messages.value = chat.messages || []
+      }
+      try {
+        const approvalData = await getJson<{ approvals: ApprovalItem[] }>(
+          `/tasks/${data.task_id}/approvals`, 'u002',
+        )
+        approvals.value = approvalData.approvals || []
+      } catch {
+        approvals.value = []
       }
     }
     start()
@@ -208,14 +222,6 @@ onUnmounted(stop)
       当前：<strong>{{ stepText(currentStep) }}</strong>
       <span class="muted">（{{ stepIndex + 1 }} / {{ flow.timeline.length }}）</span>
     </p>
-  </section>
-
-  <section v-if="flow" class="card">
-    <h2>聊天对话</h2>
-    <div class="small muted" style="margin-bottom: 8px">
-      橙色为本 trace 对应任务的消息。
-    </div>
-    <ChatTranscript :messages="messages" :active-task-id="flow.task_id" />
   </section>
 
   <section v-if="flow" class="card">
@@ -299,4 +305,24 @@ onUnmounted(stop)
       </div>
     </div>
   </section>
+
+  <div v-if="flow" class="grid-2" style="margin-top: 18px">
+    <section class="card">
+      <h2>聊天对话</h2>
+      <div class="small muted" style="margin-bottom: 8px">
+        {{ hasApprovals
+          ? '该 trace 有审批记录，橙色高亮在审批信息；聊天记录不再高亮。'
+          : '橙色为本 trace 对应任务的消息。' }}
+      </div>
+      <ChatTranscript
+        :messages="messages"
+        :active-task-id="hasApprovals ? null : flow.task_id"
+      />
+    </section>
+
+    <section class="card">
+      <h2>审批信息</h2>
+      <ApprovalSummary :approvals="approvals" :highlight="hasApprovals" />
+    </section>
+  </div>
 </template>
