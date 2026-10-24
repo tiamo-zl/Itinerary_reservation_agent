@@ -5,6 +5,7 @@ const backend = 'http://127.0.0.1:8000'
 const proxied = [
   '/chat',
   '/tasks',
+  '/sessions',
   '/traces',
   '/approvals',
   '/admin',

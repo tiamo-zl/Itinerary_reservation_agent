@@ -96,6 +96,21 @@ export interface ChatMessage {
   created_at?: string
 }
 
+export interface SessionSummary {
+  session_id: string
+  message_count: number
+  updated_at: string
+  last_message: string | null
+  last_role: string | null
+  latest_task: {
+    task_id: string
+    trace_id: string | null
+    status: string
+    revision: number
+    updated_at: string
+  } | null
+}
+
 export interface OverviewData {
   totals: {
     traces: number

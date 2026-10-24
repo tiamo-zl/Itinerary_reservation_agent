@@ -147,7 +147,7 @@ onMounted(load)
       </div>
     </div>
 
-    <div class="grid-2">
+    <div class="stack">
       <section class="card">
         <h2>按层延迟</h2>
         <table class="table">

@@ -30,3 +30,10 @@ async def test_chat_history_roundtrip(tmp_path):
         second = client.get("/sessions/session-1/messages").json()["messages"]
         assert [message["role"] for message in second[-2:]] == ["user", "assistant"]
         assert second[-1]["content"]
+
+        sessions = client.get(
+            "/sessions", headers={"X-Mock-User": "u002"}
+        ).json()["sessions"]
+        session = next(item for item in sessions if item["session_id"] == "session-1")
+        assert session["latest_task"]["task_id"] == task_id
+        assert session["latest_task"]["status"] == "COMPLETED"

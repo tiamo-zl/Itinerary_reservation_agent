@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import {
@@ -7,6 +7,7 @@ import {
   streamPost,
   type ChatMessage,
   type SSEEvent,
+  type SessionSummary,
   type TaskState,
 } from '../api'
 
@@ -24,6 +25,7 @@ localStorage.setItem('itinerary.session_id', sessionId.value)
 const user = ref('u002')
 const message = ref('下周二去北京出差两天，住王府井附近，预算 1000 元')
 const history = ref<ChatMessage[]>([])
+const sessions = ref<SessionSummary[]>([])
 const events = ref<SSEEvent[]>([])
 const busy = ref(false)
 const loadingTask = ref(false)
@@ -32,6 +34,7 @@ const taskId = ref('')
 const traceId = ref('')
 const taskStatus = ref('')
 const approvalStatus = ref('')
+const taskValues = ref<Record<string, any>>({})
 const loadTaskId = ref(String(route.query.task || ''))
 const interrupt = ref<Record<string, any> | null>(null)
 const showModify = ref(false)
@@ -48,6 +51,33 @@ const options = computed<Array<Record<string, any>>>(() =>
   Array.isArray(interrupt.value?.options) ? interrupt.value.options : [],
 )
 
+const progressSteps = computed(() => {
+  const values = taskValues.value || {}
+  const approval = values.approval?.status
+  const items = [
+    { label: '理解需求', done: Boolean(values.request?.destination_city) },
+    { label: '规划', done: Array.isArray(values.plan) && values.plan.length > 0 },
+    {
+      label: '查询',
+      done: Boolean(
+        values.options?.flights?.length || values.options?.hotels?.length,
+      ),
+    },
+    { label: '差标', done: Boolean(values.policy_result) },
+    {
+      label: '审批',
+      done: approval === 'approved' || approval === 'rejected',
+    },
+    { label: '确认', done: Boolean(values.confirmed) },
+    { label: '下单', done: values.status === 'COMPLETED' },
+  ]
+  const activeIndex = items.findIndex((item) => !item.done)
+  return items.map((item, index) => ({
+    ...item,
+    active: index === activeIndex,
+  }))
+})
+
 function eventLabel(event: SSEEvent): string {
   const data = event.data || {}
   if (data.node) return `${event.type} · ${data.node}`
@@ -55,6 +85,21 @@ function eventLabel(event: SSEEvent): string {
   if (data.code) return `${event.type} · ${data.code}`
   if (data.message) return `${event.type} · ${data.message}`
   return event.type
+}
+
+function statusClass(value: string | null | undefined) {
+  const normalized = String(value || '').toLowerCase()
+  if (['rejected', 'failed', 'cancelled'].includes(normalized)) return 'badge-bad'
+  if (['waiting_approval', 'waiting_human', 'paused', 'pending'].includes(normalized)) {
+    return 'badge-warn'
+  }
+  if (['completed', 'approved'].includes(normalized)) return 'badge-good'
+  return ''
+}
+
+function formatTime(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
 async function loadHistory() {
@@ -68,6 +113,17 @@ async function loadHistory() {
   }
 }
 
+async function loadSessions() {
+  try {
+    const data = await getJson<{ sessions: SessionSummary[] }>(
+      '/sessions', user.value,
+    )
+    sessions.value = data.sessions || []
+  } catch {
+    sessions.value = []
+  }
+}
+
 function newSession() {
   sessionId.value = createSessionId()
   localStorage.setItem('itinerary.session_id', sessionId.value)
@@ -77,6 +133,7 @@ function newSession() {
   traceId.value = ''
   taskStatus.value = ''
   approvalStatus.value = ''
+  taskValues.value = {}
   interrupt.value = null
 }
 
@@ -102,6 +159,7 @@ function handleEvent(event: SSEEvent) {
     if (event.type === 'error') errorText.value = data.message || '请求失败'
     interrupt.value = null
     void loadHistory()
+    void loadSessions()
   }
 }
 
@@ -111,6 +169,7 @@ async function refreshTask(silent = false) {
   try {
     const state = await getJson<TaskState>(`/tasks/${taskId.value}/state`)
     const values = state.values || {}
+    taskValues.value = values
     taskStatus.value = String(values.status || '')
     approvalStatus.value = String(values.approval?.status || '')
     if (values.session_id && values.session_id !== sessionId.value) {
@@ -147,6 +206,26 @@ async function loadTask() {
   scheduleTaskPolling()
 }
 
+async function openSession(session: SessionSummary) {
+  sessionId.value = session.session_id
+  localStorage.setItem('itinerary.session_id', sessionId.value)
+  await loadHistory()
+  if (session.latest_task) {
+    taskId.value = session.latest_task.task_id
+    traceId.value = session.latest_task.trace_id || ''
+    loadTaskId.value = session.latest_task.task_id
+    await refreshTask(false)
+    scheduleTaskPolling()
+  } else {
+    taskId.value = ''
+    traceId.value = ''
+    taskStatus.value = ''
+    approvalStatus.value = ''
+    taskValues.value = {}
+    interrupt.value = null
+  }
+}
+
 async function run(path: string, payload: unknown) {
   busy.value = true
   errorText.value = ''
@@ -165,11 +244,13 @@ async function send() {
   traceId.value = ''
   taskStatus.value = ''
   approvalStatus.value = ''
+  taskValues.value = {}
   interrupt.value = null
   const text = message.value
   history.value.push({ role: 'user', content: text })
   await run('/chat', { message: text, session_id: sessionId.value })
   await loadHistory()
+  await loadSessions()
 }
 
 async function resume(payload: unknown) {
@@ -177,6 +258,8 @@ async function resume(payload: unknown) {
   interrupt.value = null
   await run(`/tasks/${taskId.value}/resume`, payload)
   await refreshTask(true)
+  await loadHistory()
+  await loadSessions()
 }
 
 async function confirmFirst() {
@@ -199,8 +282,12 @@ async function submitModify() {
   await resume({ action: 'modify', amended_request: request })
 }
 
+watch(user, () => {
+  void loadSessions()
+})
+
 onMounted(async () => {
-  await loadHistory()
+  await Promise.all([loadHistory(), loadSessions()])
   if (loadTaskId.value) await loadTask()
   if (taskId.value) scheduleTaskPolling()
 })
@@ -273,7 +360,34 @@ onUnmounted(() => {
       <h2>任务与人工决策</h2>
 
       <div class="field">
-        <label for="load-task">按 task_id 加载（审批后回到此页时用）</label>
+        <h3>历史会话</h3>
+        <div class="session-list">
+          <button
+            v-for="session in sessions"
+            :key="session.session_id"
+            class="session-item"
+            :class="{ active: session.session_id === sessionId }"
+            @click="openSession(session)"
+          >
+            <div class="row">
+              <span class="mono small">{{ session.session_id.slice(0, 12) }}…</span>
+              <span
+                v-if="session.latest_task"
+                class="badge"
+                :class="statusClass(session.latest_task.status)"
+              >
+                {{ session.latest_task.status }}
+              </span>
+            </div>
+            <div class="session-preview">{{ session.last_message || '—' }}</div>
+            <div class="small muted">{{ formatTime(session.updated_at) }}</div>
+          </button>
+          <div v-if="!sessions.length" class="empty">暂无历史会话</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="load-task">按 task_id 加载</label>
         <div class="row">
           <input id="load-task" v-model="loadTaskId" placeholder="task_id" style="flex: 1" />
           <button class="btn" :disabled="loadingTask" @click="loadTask">加载</button>
@@ -284,9 +398,26 @@ onUnmounted(() => {
         <div class="small muted">当前任务</div>
         <div class="mono small">{{ taskId }}</div>
         <div class="row" style="margin-top: 6px">
-          <span v-if="taskStatus" class="badge">{{ taskStatus }}</span>
+          <span v-if="taskStatus" class="badge" :class="statusClass(taskStatus)">
+            {{ taskStatus }}
+          </span>
           <span v-if="approvalStatus" class="badge badge-accent">审批 {{ approvalStatus }}</span>
           <RouterLink v-if="traceId" :to="`/trace/${traceId}`">Trace 回放 →</RouterLink>
+        </div>
+      </div>
+
+      <div v-if="taskId" class="field">
+        <h3>对话进展</h3>
+        <div class="progress-list">
+          <div
+            v-for="step in progressSteps"
+            :key="step.label"
+            class="progress-step"
+            :class="{ done: step.done, active: step.active }"
+          >
+            <span class="progress-dot">{{ step.done ? '✓' : '•' }}</span>
+            {{ step.label }}
+          </div>
         </div>
       </div>
 

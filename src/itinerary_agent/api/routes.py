@@ -104,6 +104,35 @@ def build_router(container) -> APIRouter:
         )
         return dict(row) if row else {"error": "not found"}
 
+    @router.get("/sessions")
+    async def sessions(request: Request, limit: int = 50):
+        # 会话来自 messages；任务状态通过 task_id 关联，供历史列表显示进展。
+        ctx = build_context(request)
+        rows = await container.db.fetchall(
+            "SELECT m.session_id, COUNT(*) AS message_count, "
+            "MAX(m.created_at) AS updated_at, "
+            "(SELECT content FROM messages m2 WHERE m2.session_id = m.session_id "
+            " ORDER BY m2.id DESC LIMIT 1) AS last_message, "
+            "(SELECT role FROM messages m2 WHERE m2.session_id = m.session_id "
+            " ORDER BY m2.id DESC LIMIT 1) AS last_role "
+            "FROM messages m JOIN tasks t ON t.task_id = m.task_id "
+            "WHERE t.user_id = ? GROUP BY m.session_id "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (ctx.user_id, limit),
+        )
+        result = []
+        for row in rows:
+            item = dict(row)
+            latest = await container.db.fetchone(
+                "SELECT t.task_id, t.trace_id, t.status, t.revision, t.updated_at "
+                "FROM tasks t JOIN messages m ON m.task_id = t.task_id "
+                "WHERE m.session_id = ? ORDER BY t.updated_at DESC LIMIT 1",
+                (item["session_id"],),
+            )
+            item["latest_task"] = dict(latest) if latest else None
+            result.append(item)
+        return {"sessions": result}
+
     @router.get("/sessions/{session_id}/messages")
     async def session_messages(session_id: str, limit: int = 100):
         return {
