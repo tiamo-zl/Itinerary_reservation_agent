@@ -26,6 +26,28 @@ export interface TraceSummary {
   tenant_id: string | null
 }
 
+export interface TaskSummary {
+  task_id: string
+  user_id: string
+  tenant_id: string
+  status: string
+  revision: number
+  trace_id: string | null
+  updated_at: string
+  trace_count: number
+  span_count: number
+  last_span_at: string | null
+}
+
+export interface TaskTraceSummary {
+  trace_id: string
+  started_at: string
+  span_count: number
+  error_count: number
+  max_duration_ms: number
+  layers: string[]
+}
+
 export interface TraceDetail {
   trace_id: string
   task_id: string | null

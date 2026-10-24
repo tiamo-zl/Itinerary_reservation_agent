@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # 不需要每层函数都显式接收 trace_id 参数。
 _current_trace: ContextVar[str | None] = ContextVar("current_trace", default=None)
 _current_span: ContextVar[str | None] = ContextVar("current_span", default=None)
+_current_task: ContextVar[str | None] = ContextVar("current_task", default=None)
 
 
 class TraceRecorder:
@@ -45,7 +46,12 @@ class TraceRecorder:
         _current_trace.set(trace_id)
         # 新 trace 必须清空 span 上下文，避免复用旧请求的 parent。
         _current_span.set(None)
+        _current_task.set(None)
         return trace_id
+
+    def set_task(self, task_id: str | None) -> None:
+        """标记当前 trace 所属任务，供 Span 归属和按 task 聚合。"""
+        _current_task.set(task_id)
 
     def current_trace_id(self) -> str | None:
         return _current_trace.get()
@@ -58,6 +64,9 @@ class TraceRecorder:
         即使异常发生也会记录 error 状态，然后继续向上抛出。
         """
         trace_id = _current_trace.get() or self.start_trace()
+        task_id = _current_task.get()
+        if task_id:
+            attributes.setdefault("task_id", task_id)
         span_id = uuid4().hex
         parent_id = _current_span.get()
         started_at = datetime.now(UTC)

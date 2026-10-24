@@ -154,6 +154,9 @@ class OrchestrationService:
         """
         state = initial_state(ctx, message)
         config = {"configurable": {"thread_id": state["task_id"]}}
+        if self.traces is not None:
+            self.traces.start_trace(state["trace_id"])
+            self.traces.set_task(state["task_id"])
         if self.memory is not None:
             await self.memory.append_message(
                 ctx.session_id, state["task_id"], "user", message
@@ -266,6 +269,9 @@ class OrchestrationService:
         from langgraph.types import Command
 
         config = {"configurable": {"thread_id": task_id}}
+        if self.traces is not None:
+            self.traces.start_trace(ctx.trace_id)
+            self.traces.set_task(task_id)
         if decision.action == "pause":
             # 暂停不销毁现场；后续 continue 仍从同一个 interrupt 恢复。
             await self._set_task_status(task_id, "PAUSED")

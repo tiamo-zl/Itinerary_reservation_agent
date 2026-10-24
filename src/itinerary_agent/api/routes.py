@@ -20,7 +20,9 @@ from itinerary_agent.api.sse import to_sse
 from itinerary_agent.domain.models import Decision
 from itinerary_agent.observability.flow import build_flow
 from itinerary_agent.observability.query import (
+    list_task_summaries,
     list_traces,
+    list_traces_for_task,
     load_trace_tree,
     trace_overview,
 )
@@ -100,6 +102,17 @@ def build_router(container) -> APIRouter:
                     yield to_sse(event)
 
         return EventSourceResponse(events())
+
+    @router.get("/tasks/summary")
+    async def task_summaries(limit: int = 50):
+        return {"tasks": await list_task_summaries(container.db, limit)}
+
+    @router.get("/tasks/{task_id}/traces")
+    async def task_traces(task_id: str):
+        return {
+            "task_id": task_id,
+            "traces": await list_traces_for_task(container.db, task_id),
+        }
 
     @router.get("/tasks/{task_id}")
     async def get_task(task_id: str):

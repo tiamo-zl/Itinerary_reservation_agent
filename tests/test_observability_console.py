@@ -32,6 +32,15 @@ async def test_trace_and_badcase_apis(tmp_path):
         traces = client.get("/traces").json()["traces"]
         assert any(item["trace_id"] == trace_id for item in traces)
 
+        task_summary = client.get("/tasks/summary").json()["tasks"]
+        summary = next(item for item in task_summary if item["task_id"] == task_id)
+        assert summary["trace_count"] >= 1
+        assert summary["span_count"] > 0
+
+        task_traces = client.get(f"/tasks/{task_id}/traces").json()["traces"]
+        assert task_traces[0]["trace_id"] == trace_id
+        assert task_traces[0]["span_count"] > 0
+
         overview = client.get("/traces/overview").json()
         assert overview["totals"]["traces"] >= 1
         assert overview["layers"]

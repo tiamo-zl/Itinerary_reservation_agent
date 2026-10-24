@@ -7,11 +7,17 @@ import {
   patchJson,
   type Badcase,
   type OverviewData,
+  type TaskSummary,
+  type TaskTraceSummary,
 } from '../api'
 
 const overview = ref<OverviewData | null>(null)
 const badcases = ref<Badcase[]>([])
+const tasks = ref<TaskSummary[]>([])
+const selectedTaskId = ref('')
+const taskTraces = ref<TaskTraceSummary[]>([])
 const loading = ref(false)
+const loadingTraces = ref(false)
 const errorText = ref('')
 
 const openBadcases = computed(
@@ -47,16 +53,45 @@ function statusClass(status: string) {
   return 'badge-good'
 }
 
+async function loadTaskTraces() {
+  if (!selectedTaskId.value) {
+    taskTraces.value = []
+    return
+  }
+  loadingTraces.value = true
+  try {
+    const data = await getJson<{ traces: TaskTraceSummary[] }>(
+      `/tasks/${selectedTaskId.value}/traces`,
+    )
+    taskTraces.value = data.traces || []
+  } catch (error) {
+    errorText.value = error instanceof Error ? error.message : String(error)
+    taskTraces.value = []
+  } finally {
+    loadingTraces.value = false
+  }
+}
+
+function selectTask(task: TaskSummary) {
+  selectedTaskId.value = task.task_id
+  void loadTaskTraces()
+}
+
 async function load() {
   loading.value = true
   errorText.value = ''
   try {
-    const [data, cases] = await Promise.all([
+    const [data, cases, taskData] = await Promise.all([
       getJson<OverviewData>('/traces/overview'),
       getJson<{ badcases: Badcase[] }>('/badcases', 'u002'),
+      getJson<{ tasks: TaskSummary[] }>('/tasks/summary'),
     ])
     overview.value = data
     badcases.value = cases.badcases || []
+    tasks.value = taskData.tasks || []
+    if (selectedTaskId.value) {
+      await loadTaskTraces()
+    }
   } catch (error) {
     errorText.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -172,34 +207,83 @@ onMounted(load)
       </section>
 
       <section class="card">
-        <h2>最近 Trace</h2>
+        <div class="card-header">
+          <h2>任务 Trace</h2>
+          <select
+            v-model="selectedTaskId"
+            style="width: auto; min-width: 280px"
+            @change="loadTaskTraces"
+          >
+            <option value="">先选择 task_id</option>
+            <option v-for="task in tasks" :key="task.task_id" :value="task.task_id">
+              {{ task.task_id.slice(0, 12) }}… · {{ task.status }} · {{ task.user_id }}
+            </option>
+          </select>
+        </div>
+
         <table class="table">
           <thead>
             <tr>
-              <th>Trace</th>
+              <th>Task</th>
+              <th>用户</th>
               <th>状态</th>
+              <th>Traces</th>
               <th>Spans</th>
-              <th>最大延迟</th>
+              <th>更新时间</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="trace in overview.recent_traces" :key="trace.trace_id">
+            <tr
+              v-for="task in tasks"
+              :key="task.task_id"
+              class="conversation-row"
+              :class="{ active: task.task_id === selectedTaskId }"
+              @click="selectTask(task)"
+            >
+              <td class="mono small">{{ task.task_id.slice(0, 14) }}…</td>
+              <td>{{ task.user_id }}</td>
               <td>
-                <RouterLink :to="`/trace/${trace.trace_id}`" class="mono small">
-                  {{ trace.trace_id }}
-                </RouterLink>
+                <span class="badge" :class="statusClass(task.status)">{{ task.status }}</span>
               </td>
-              <td>
-                <span class="badge" :class="statusClass(trace.task_status || '')">
-                  {{ trace.task_status || '—' }}
-                </span>
-              </td>
-              <td>{{ trace.span_count }}</td>
-              <td>{{ formatMs(trace.max_duration_ms) }}</td>
+              <td>{{ task.trace_count }}</td>
+              <td>{{ task.span_count }}</td>
+              <td class="small muted">{{ task.updated_at }}</td>
             </tr>
           </tbody>
         </table>
-        <div v-if="!overview.recent_traces.length" class="empty">还没有 trace</div>
+        <div v-if="!tasks.length" class="empty">还没有任务</div>
+
+        <template v-if="selectedTaskId">
+          <h3 style="margin-top: 16px">相关 Trace</h3>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Trace</th>
+                <th>Spans</th>
+                <th>Errors</th>
+                <th>最大延迟</th>
+                <th>Layers</th>
+                <th>跳转</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="trace in taskTraces" :key="trace.trace_id">
+                <td class="mono small">{{ trace.trace_id.slice(0, 16) }}…</td>
+                <td>{{ trace.span_count }}</td>
+                <td>{{ trace.error_count }}</td>
+                <td>{{ formatMs(trace.max_duration_ms) }}</td>
+                <td class="small">{{ trace.layers.join(', ') }}</td>
+                <td class="row">
+                  <RouterLink :to="`/trace/${trace.trace_id}`">回放</RouterLink>
+                  <RouterLink :to="`/flow/${trace.trace_id}`">流转图</RouterLink>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="!taskTraces.length && !loadingTraces" class="empty">
+            该任务没有 trace
+          </div>
+        </template>
       </section>
     </div>
 

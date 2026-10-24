@@ -38,6 +38,52 @@ async def load_trace_tree(db: Database, trace_id: str) -> list[dict]:
     return roots
 
 
+async def list_task_summaries(db: Database, limit: int = 50) -> list[dict]:
+    """按 task 聚合 trace，供概览页先选 task 再查看 trace。"""
+    rows = await db.fetchall(
+        "SELECT t.task_id, t.user_id, t.tenant_id, t.status, t.revision, "
+        "t.trace_id, t.updated_at, "
+        "(SELECT COUNT(DISTINCT s.trace_id) FROM spans s "
+        " WHERE s.trace_id = t.trace_id "
+        " OR json_extract(s.attributes, '$.task_id') = t.task_id) AS trace_count, "
+        "(SELECT COUNT(*) FROM spans s "
+        " WHERE s.trace_id = t.trace_id "
+        " OR json_extract(s.attributes, '$.task_id') = t.task_id) AS span_count, "
+        "(SELECT MAX(s.start_time) FROM spans s "
+        " WHERE s.trace_id = t.trace_id "
+        " OR json_extract(s.attributes, '$.task_id') = t.task_id) AS last_span_at "
+        "FROM tasks t ORDER BY t.updated_at DESC LIMIT ?",
+        (limit,),
+    )
+    return [dict(row) for row in rows]
+
+
+async def list_traces_for_task(db: Database, task_id: str) -> list[dict]:
+    """返回某任务关联的全部 trace。
+
+    兼容旧数据：优先用 tasks.trace_id，同时合并 Span 属性中的 task_id。
+    """
+    rows = await db.fetchall(
+        "SELECT s.trace_id, MIN(s.start_time) AS started_at, "
+        "COUNT(*) AS span_count, "
+        "SUM(CASE WHEN s.status = 'error' THEN 1 ELSE 0 END) AS error_count, "
+        "MAX(s.duration_ms) AS max_duration_ms, "
+        "GROUP_CONCAT(DISTINCT s.layer) AS layers "
+        "FROM spans s "
+        "WHERE s.trace_id = COALESCE("
+        "  (SELECT trace_id FROM tasks WHERE task_id = ?), ''"
+        ") OR json_extract(s.attributes, '$.task_id') = ? "
+        "GROUP BY s.trace_id ORDER BY started_at",
+        (task_id, task_id),
+    )
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["layers"] = sorted((item["layers"] or "").split(","))
+        result.append(item)
+    return result
+
+
 async def list_traces(db: Database, limit: int = 50) -> list[dict]:
     """列出最近的 trace，供回放页和概览页使用。"""
     rows = await db.fetchall(

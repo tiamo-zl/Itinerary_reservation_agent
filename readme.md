@@ -78,7 +78,7 @@ Vite 会把 `/chat`、`/tasks`、`/traces`、`/admin`、`/feedback`、`/badcases
 - `/approvals`：审批工作台，展示待审批任务的差旅需求、超标明细和候选方案
 - `/flow`：输入 `trace_id` 查看节点/边流转图、聊天记录和审批信息，每秒高亮下一次流转
 - `/trace`：输入 `trace_id` 查看调用树、Checkpoint 历史、聊天对话和审批信息，并提交反馈
-- `/overview`：错误率、分层延迟、模型 token/成本、最近 trace 和 badcase
+- `/overview`：错误率、分层延迟、模型 token/成本、按 task 聚合 trace（先选 task 再看相关 trace）和 badcase
 
 ```bash
 npm run build      # 类型检查 + 生产构建
