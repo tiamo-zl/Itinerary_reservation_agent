@@ -16,12 +16,18 @@ def scrub(text: str) -> str:
     return PHONE_PATTERN.sub("[PHONE]", text)
 
 
-def scrub_obj(value):
-    """递归脱敏 dict/list 中的字符串，供 SSE 事件使用。"""
+def _is_identifier_key(key: str | None) -> bool:
+    # task_id/trace_id/approval_id 等是系统标识，不能当文本做 PII 替换。
+    return bool(key) and (key == "id" or key.endswith("_id"))
+
+
+def scrub_obj(value, key: str | None = None):
+    """递归脱敏 dict/list 中的文本，跳过 ID 字段。"""
     if isinstance(value, str):
-        return scrub(value)
+        return value if _is_identifier_key(key) else scrub(value)
     if isinstance(value, dict):
-        return {key: scrub_obj(item) for key, item in value.items()}
+        return {child_key: scrub_obj(item, child_key)
+                for child_key, item in value.items()}
     if isinstance(value, list):
-        return [scrub_obj(item) for item in value]
+        return [scrub_obj(item, key) for item in value]
     return value
