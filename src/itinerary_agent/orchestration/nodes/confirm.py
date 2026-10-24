@@ -23,12 +23,43 @@ async def confirm(state: dict, deps) -> dict:
         if not state.get("pending_human") and policy.get("passed") is False:
             message = "方案不符合差标，请修改预算/选项，或取消本次任务。"
 
+        options = state.get("options", {})
+        summarize = []
+        for flight in options.get("flights", []):
+            summarize.append(
+                f"{flight.get('flight_no', flight.get('option_id'))} "
+                f"{flight.get('price')}"
+            )
+        for hotel in options.get("hotels", []):
+            summarize.append(
+                f"{hotel.get('hotel_name', hotel.get('option_id'))} "
+                f"{hotel.get('price_per_night')}/晚"
+            )
+        if summarize:
+            message += " " + "；".join(summarize)
+        warnings = [
+            violation["message"]
+            for violation in policy.get("violations", [])
+            if violation.get("severity") == "warn"
+        ]
+        if warnings:
+            message += "。提示：" + "；".join(warnings)
+
+        # 机票和酒店一起交给前端，避免只有酒店时确认弹窗为空。
+        confirm_options = [
+            {"option_type": "flight", **flight}
+            for flight in options.get("flights", [])
+        ] + [
+            {"option_type": "hotel", **hotel}
+            for hotel in options.get("hotels", [])
+        ]
+
     # interrupt 在 span 外调用，避免人工等待期间 span 长时间未结束。
     decision = interrupt(
         HumanRequest(
             type=HumanRequestType.CONFIRM_OPTION,
             message=message,
-            options=state.get("options", {}).get("flights", []),
+            options=confirm_options,
         ).model_dump(mode="json")
     )
 

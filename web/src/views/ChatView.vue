@@ -23,7 +23,7 @@ const sessionId = ref(
 localStorage.setItem('itinerary.session_id', sessionId.value)
 
 const user = ref('u002')
-const message = ref('下周二去北京出差两天，住王府井附近，预算 1000 元')
+const message = ref('')
 const history = ref<ChatMessage[]>([])
 const sessions = ref<SessionSummary[]>([])
 const events = ref<SSEEvent[]>([])
@@ -38,6 +38,8 @@ const taskValues = ref<Record<string, any>>({})
 const loadTaskId = ref(String(route.query.task || ''))
 const interrupt = ref<Record<string, any> | null>(null)
 const showModify = ref(false)
+const confirmFlightId = ref('')
+const confirmHotelId = ref('')
 const amended = ref({
   destination_city: '上海',
   start_date: '',
@@ -50,6 +52,27 @@ const isApproval = computed(() => interrupt.value?.kind === 'approval')
 const options = computed<Array<Record<string, any>>>(() =>
   Array.isArray(interrupt.value?.options) ? interrupt.value.options : [],
 )
+const flightOptions = computed(() =>
+  options.value.filter(
+    (option) => option.option_type === 'flight' || Boolean(option.flight_no),
+  ),
+)
+const hotelOptions = computed(() =>
+  options.value.filter(
+    (option) => option.option_type === 'hotel' || Boolean(option.hotel_name),
+  ),
+)
+
+function setConfirmDefaults(items: Array<Record<string, any>>) {
+  confirmFlightId.value = (
+    items.find((item) => item.option_type === 'flight' || item.flight_no)
+    ?.option_id || ''
+  )
+  confirmHotelId.value = (
+    items.find((item) => item.option_type === 'hotel' || item.hotel_name)
+    ?.option_id || ''
+  )
+}
 
 const progressSteps = computed(() => {
   const values = taskValues.value || {}
@@ -154,6 +177,13 @@ function handleEvent(event: SSEEvent) {
   if (event.type === 'interrupt') {
     interrupt.value = data.human_request || null
     showModify.value = false
+    if (data.human_request?.kind !== 'approval') {
+      setConfirmDefaults(
+        Array.isArray(data.human_request?.options)
+          ? data.human_request.options
+          : [],
+      )
+    }
   }
   if (event.type === 'result' || event.type === 'error') {
     if (event.type === 'error') errorText.value = data.message || '请求失败'
@@ -184,11 +214,28 @@ async function refreshTask(silent = false) {
         message: '该任务需要审批，请前往审批工作台处理。',
       }
     } else if (next.includes('confirm')) {
+      const confirmOptions = [
+        ...(values.options?.flights || []).map((option: Record<string, any>) => ({
+          option_type: 'flight',
+          ...option,
+        })),
+        ...(values.options?.hotels || []).map((option: Record<string, any>) => ({
+          option_type: 'hotel',
+          ...option,
+        })),
+      ]
+      const summary = confirmOptions.map((option) => (
+        option.option_type === 'hotel'
+          ? `${option.hotel_name || option.option_id} ${option.price_per_night}/晚`
+          : `${option.flight_no || option.option_id} ${option.price}`
+      )).join('；')
       interrupt.value = {
         type: 'confirm_option',
-        message: values.pending_human?.message || '请确认方案后继续下单。',
-        options: values.options?.flights || [],
+        message: values.pending_human?.message
+          || `请确认方案后继续下单。${summary ? ` ${summary}` : ''}`,
+        options: confirmOptions,
       }
+      setConfirmDefaults(confirmOptions)
     } else if (['COMPLETED', 'CANCELLED', 'FAILED'].includes(taskStatus.value)) {
       interrupt.value = null
     }
@@ -262,8 +309,14 @@ async function resume(payload: unknown) {
   await loadSessions()
 }
 
-async function confirmFirst() {
-  await resume({ action: 'select' })
+async function confirmSelected() {
+  await resume({
+    action: 'select',
+    selected: {
+      flight_id: confirmFlightId.value || null,
+      hotel_id: confirmHotelId.value || null,
+    },
+  })
 }
 
 async function cancelTask() {
@@ -332,7 +385,7 @@ onUnmounted(() => {
       </div>
 
       <div class="field" style="margin-top: 14px">
-        <label for="message">自然语言需求</label>
+        <label for="message">自然语言需求，例如：下周二去北京出差两天，住王府井附近，预算 1000 元</label>
         <textarea id="message" v-model="message" rows="3" :disabled="busy" />
       </div>
 
@@ -433,11 +486,35 @@ onUnmounted(() => {
         </template>
 
         <template v-else>
-          <div v-if="options.length" class="small muted">
-            候选：{{ options.slice(0, 3).map((option) => option.flight_no || option.option_id).join(' / ') }}
+          <div v-if="flightOptions.length" class="field">
+            <label for="flight-choice">机票</label>
+            <select id="flight-choice" v-model="confirmFlightId">
+              <option
+                v-for="option in flightOptions"
+                :key="option.option_id"
+                :value="option.option_id"
+              >
+                {{ option.flight_no || option.option_id }} · ¥{{ option.price }}
+              </option>
+            </select>
           </div>
+
+          <div v-if="hotelOptions.length" class="field">
+            <label for="hotel-choice">酒店</label>
+            <select id="hotel-choice" v-model="confirmHotelId">
+              <option
+                v-for="option in hotelOptions"
+                :key="option.option_id"
+                :value="option.option_id"
+              >
+                {{ option.hotel_name || option.option_id }} ·
+                ¥{{ option.price_per_night }}/晚
+              </option>
+            </select>
+          </div>
+
           <div class="row">
-            <button class="btn btn-primary" :disabled="busy" @click="confirmFirst">确认第一个方案</button>
+            <button class="btn btn-primary" :disabled="busy" @click="confirmSelected">确认所选方案</button>
             <button class="btn btn-ghost" :disabled="busy" @click="showModify = !showModify">修改需求</button>
             <button class="btn btn-danger" :disabled="busy" @click="cancelTask">取消任务</button>
           </div>
