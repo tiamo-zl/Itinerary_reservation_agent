@@ -1,6 +1,6 @@
 """Uvicorn 入口。
 
-启动命令：uv run uvicorn itinerary_agent.main:app --reload
+启动命令：uv run uvicorn --app-dir src itinerary_agent.main:app --reload
 """
 
 from itinerary_agent.api.app import create_app

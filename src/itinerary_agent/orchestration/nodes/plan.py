@@ -34,11 +34,12 @@ async def plan(state: dict, deps) -> dict:
         ]
         completion = await deps.model.complete(ctx, messages, deps.tier_reasoning)
 
+    # 模型输出只用于“建议步骤”，不是执行依据；解析失败时退化为默认查询步骤，
+    # 后续 search/policy 节点仍会按确定性代码继续执行。
     try:
         text = completion.text.strip()
         start, end = text.find("{"), text.rfind("}")
         steps = json.loads(text[start:end + 1]).get("steps", [])
     except Exception:  # noqa: BLE001 - 模型输出不可信，解析失败需降级
-        # 规划输出解析失败不阻塞主链路；搜索节点仍会执行查询。
         steps = ["search_flights", "search_hotels"]
     return {"plan": steps, "status": "EXECUTING", "policy_refs": refs}

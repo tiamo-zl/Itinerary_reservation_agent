@@ -30,6 +30,8 @@ SYSTEM_TEMPLATE = """你是差旅需求解析器。今天是 {today}。
 WEEKDAYS = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5,
             "日": 6, "天": 6}
 
+# 真实模型经常输出更自然的英文键名；在进入 Pydantic 校验前先做一次兼容。
+# 这样提示词和模型能力有偏差时，不会因为一个字段名就整条链路失败。
 ALIASES = {
     "destination": "destination_city",
     "departure_date": "start_date",
@@ -40,7 +42,11 @@ ALIASES = {
 
 
 def _load_json(text: str) -> dict:
-    """容忍模型偶尔输出的 ```json 代码块。"""
+    """从模型输出中提取 JSON。
+
+    兼容三类常见偏差：```json 代码块、前后解释文字、JSON 前后空白。
+    仍然解析失败时抛异常，由 understand 转成追问，而不是猜测字段。
+    """
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -52,7 +58,11 @@ def _load_json(text: str) -> dict:
 
 
 def _parse_relative_date(value, today: date):
-    """把“下周二/明天/3天后”等常见表达转成 ISO 日期。"""
+    """把“下周二/明天/3天后”等常见表达转成 ISO 日期。
+
+    模型即使被要求输出 YYYY-MM-DD，也可能保留自然语言日期；
+    这里只处理 demo 覆盖得到的表达，无法识别时原样返回。
+    """
     if not isinstance(value, str):
         return value
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
@@ -64,6 +74,8 @@ def _parse_relative_date(value, today: date):
     if value == "后天":
         return (today + timedelta(days=2)).isoformat()
 
+    # “下周X”以“下周一”为基准；“本周X”以“本周一”为基准；
+    # 不带前缀的“周X”取今天之后最近的一次。
     match = re.fullmatch(r"(下|本|这)?周([一二三四五六日天])", value)
     if match:
         prefix, weekday_text = match.groups()
@@ -85,27 +97,35 @@ def _parse_relative_date(value, today: date):
 
 
 def normalize_payload(raw: dict, today: date | None = None) -> dict:
-    """把模型常见别名/相对日期归一化为 TripRequest 字段。"""
+    """把模型常见别名/相对日期归一化为 TripRequest 字段。
+
+    today 允许测试注入固定日期，避免测试结果随运行日期漂移。
+    """
     today = today or date.today()
+
+    # 1. 先统一键名，后续只处理 TripRequest 的标准字段。
     data: dict = {}
     for key, value in raw.items():
         data[ALIASES.get(key, key)] = value
 
+    # 2. 日期统一成 ISO；duration 只用于推算缺失的 end_date。
     duration = data.pop("duration_days", None)
     if "start_date" in data:
         data["start_date"] = _parse_relative_date(data["start_date"], today)
     if "end_date" in data:
         data["end_date"] = _parse_relative_date(data["end_date"], today)
 
-    # “出差两天”通常对应 start_date + 1 天结束。
+    # “出差两天”通常对应 start_date + 1 天结束（两天一晚）。
     if not data.get("end_date") and data.get("start_date"):
         try:
             start = date.fromisoformat(data["start_date"])
             days = int(duration) if duration else 1
             data["end_date"] = (start + timedelta(days=max(days - 1, 0))).isoformat()
         except (ValueError, TypeError):
+            # 日期无法解析时保留空值，由后续追问处理。
             pass
 
+    # 3. 模型没明确说不要机票/酒店时，默认两者都需要。
     data.setdefault("need_flight", True)
     data.setdefault("need_hotel", True)
     return data

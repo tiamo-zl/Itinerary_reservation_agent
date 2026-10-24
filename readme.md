@@ -27,7 +27,7 @@
 ```bash
 uv sync --dev
 cp .env.example .env   # scripted 模式可以先不填 Key
-uv run uvicorn itinerary_agent.main:app --reload
+uv run uvicorn --app-dir src itinerary_agent.main:app --reload
 ```
 
 打开 http://127.0.0.1:8000/ 使用最小聊天页；任务、trace 和审批接口：

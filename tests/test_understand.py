@@ -4,7 +4,8 @@ from itinerary_agent.orchestration.nodes.understand import normalize_payload
 
 
 def test_normalize_model_aliases_and_duration():
-    # 真实模型可能输出 destination/departure_date/budget 等别名。
+    # 真实模型可能输出 destination/departure_date/budget 等别名；
+    # duration_days 应被换算成 end_date，且默认需要机票和酒店。
     raw = {
         "destination": "北京",
         "departure_date": "2026-11-03",
@@ -22,6 +23,7 @@ def test_normalize_model_aliases_and_duration():
 
 
 def test_normalize_relative_weekday():
+    # “下周二”必须换算成未来的周二，而不是原样传给搜索工具。
     data = normalize_payload(
         {"destination": "北京", "departure_date": "下周二", "duration_days": 2},
         today=date(2026, 10, 21),

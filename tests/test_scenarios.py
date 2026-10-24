@@ -45,6 +45,7 @@ def _resume(client, task_id, payload, user):
 
 
 async def test_normal_booking(tmp_path):
+    """正常链路：查询 → 差标通过 → 确认 → 下单。"""
     app, _ = make_app(tmp_path)
     with TestClient(app) as client:
         events = _chat(client, "下周二去北京", "u002")
@@ -56,6 +57,7 @@ async def test_normal_booking(tmp_path):
 
 
 async def test_over_policy_requires_approval(tmp_path):
+    """超标链路：审批 interrupt → 审批通过 → 确认 → 下单。"""
     app, _ = make_app(tmp_path)
     with TestClient(app) as client:
         events = _chat(client, "下周二去北京", "u001")
@@ -75,6 +77,7 @@ async def test_over_policy_requires_approval(tmp_path):
 
 
 async def test_approval_rejected(tmp_path):
+    """审批驳回：管理员拒绝后回到人工处理。"""
     app, _ = make_app(tmp_path)
     with TestClient(app) as client:
         events = _chat(client, "下周二去北京", "u001")
@@ -102,6 +105,7 @@ async def test_approval_rejected(tmp_path):
 
 
 async def test_amendment_invalidates_downstream(tmp_path):
+    """修改需求后 revision+1，旧结果失效并重新规划。"""
     app, _ = make_app(tmp_path, script=[UNDERSTAND, PLAN, PLAN])
     with TestClient(app) as client:
         events = _chat(client, "下周二去北京", "u002")
@@ -127,6 +131,7 @@ async def test_amendment_invalidates_downstream(tmp_path):
 
 
 async def test_no_results_asks_human(tmp_path):
+    """库存为空时停在人工确认，不伪造方案。"""
     app, _ = make_app(
         tmp_path,
         script=[UNDERSTAND, PLAN],
@@ -141,6 +146,7 @@ async def test_no_results_asks_human(tmp_path):
 
 
 async def test_pause_resume_cancel(tmp_path):
+    """暂停后可继续；取消是终态。"""
     app, _ = make_app(tmp_path)
     with TestClient(app) as client:
         events = _chat(client, "去北京", "u002")
@@ -160,6 +166,7 @@ async def test_pause_resume_cancel(tmp_path):
 
 
 async def test_tool_failure_and_rag_degraded(tmp_path):
+    """工具失败与知识降级都不应拖垮主流程。"""
     app, _ = make_app(
         tmp_path,
         script=[UNDERSTAND, PLAN],
@@ -176,6 +183,7 @@ async def test_tool_failure_and_rag_degraded(tmp_path):
 
 
 async def test_booking_without_approval_denied():
+    """Guard 拒绝未审批的下单动作。"""
     class _NoopAudit:
         async def record(self, *args, **kwargs):
             return None
@@ -192,6 +200,7 @@ async def test_booking_without_approval_denied():
 
 
 async def test_cross_clause_citation(tmp_path):
+    """检索应扩展被引用条款并带上 citations。"""
     db, service = await make_policy_service(
         tmp_path,
         clauses=[
@@ -209,6 +218,7 @@ async def test_cross_clause_citation(tmp_path):
 
 
 async def test_exception_clause_applied(tmp_path):
+    """例外条款应进入检索上下文。"""
     db, service = await make_policy_service(
         tmp_path,
         clauses=[
@@ -229,6 +239,7 @@ async def test_exception_clause_applied(tmp_path):
 
 
 async def test_table_row_selection(tmp_path):
+    """表格按职级/城市过滤，只返回适用行。"""
     table = PolicyTable(
         table_id="t1", source_clause_id="c1",
         columns=["职级", "城市", "上限"],
@@ -254,6 +265,7 @@ async def test_table_row_selection(tmp_path):
 
 
 async def test_policy_version_and_insufficient(tmp_path):
+    """只检索当前版本；无命中返回 insufficient。"""
     db = Database(tmp_path / "version.db")
     await db.connect()
     store = PolicyStore(db)

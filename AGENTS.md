@@ -23,7 +23,7 @@ uv sync --dev
 uv run pytest -q
 uv run pytest tests/test_db.py::test_init_and_insert_task -v
 uv run ruff check src tests
-uv run uvicorn itinerary_agent.main:app --reload
+uv run uvicorn --app-dir src itinerary_agent.main:app --reload
 ```
 
 依赖与中间件由用户安装；不要自行执行 `uv add`、`uv sync` 或下载组件。

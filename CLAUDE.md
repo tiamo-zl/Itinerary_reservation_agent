@@ -27,7 +27,7 @@ uv run pytest -q                  # 全量测试
 uv run pytest tests/test_db.py -v # 单文件
 uv run pytest tests/test_db.py::test_init_and_insert_task -v  # 单测试
 uv run ruff check src tests       # lint
-uv run uvicorn itinerary_agent.main:app --reload
+uv run uvicorn --app-dir src itinerary_agent.main:app --reload
 ```
 
 依赖由用户安装：不要自行执行 `uv add`、`uv sync` 或下载中间件。需要新依赖时先说明用途并等待用户安装。
