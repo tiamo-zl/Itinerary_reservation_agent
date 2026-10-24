@@ -104,6 +104,13 @@ def build_router(container) -> APIRouter:
         )
         return dict(row) if row else {"error": "not found"}
 
+    @router.get("/sessions/{session_id}/messages")
+    async def session_messages(session_id: str, limit: int = 100):
+        return {
+            "session_id": session_id,
+            "messages": await container.orchestrator.get_messages(session_id, limit),
+        }
+
     @router.get("/tasks/{task_id}/state")
     async def task_state(task_id: str):
         # 供聊天页在审批完成后重新加载待确认中断。

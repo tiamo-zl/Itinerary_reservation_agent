@@ -1,12 +1,29 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
-import { getJson, streamPost, type SSEEvent, type TaskState } from '../api'
+import {
+  getJson,
+  streamPost,
+  type ChatMessage,
+  type SSEEvent,
+  type TaskState,
+} from '../api'
 
 const route = useRoute()
+
+function createSessionId() {
+  return globalThis.crypto?.randomUUID?.() || `session-${Date.now()}`
+}
+
+const sessionId = ref(
+  localStorage.getItem('itinerary.session_id') || createSessionId(),
+)
+localStorage.setItem('itinerary.session_id', sessionId.value)
+
 const user = ref('u002')
 const message = ref('下周二去北京出差两天，住王府井附近，预算 1000 元')
+const history = ref<ChatMessage[]>([])
 const events = ref<SSEEvent[]>([])
 const busy = ref(false)
 const loadingTask = ref(false)
@@ -14,6 +31,7 @@ const errorText = ref('')
 const taskId = ref('')
 const traceId = ref('')
 const taskStatus = ref('')
+const approvalStatus = ref('')
 const loadTaskId = ref(String(route.query.task || ''))
 const interrupt = ref<Record<string, any> | null>(null)
 const showModify = ref(false)
@@ -23,6 +41,7 @@ const amended = ref({
   end_date: '',
   budget_limit: '',
 })
+let taskTimer: number | undefined
 
 const isApproval = computed(() => interrupt.value?.kind === 'approval')
 const options = computed<Array<Record<string, any>>>(() =>
@@ -38,12 +57,43 @@ function eventLabel(event: SSEEvent): string {
   return event.type
 }
 
+async function loadHistory() {
+  try {
+    const data = await getJson<{ messages: ChatMessage[] }>(
+      `/sessions/${sessionId.value}/messages`, user.value,
+    )
+    history.value = data.messages || []
+  } catch {
+    // 历史加载失败不阻塞当前对话。
+  }
+}
+
+function newSession() {
+  sessionId.value = createSessionId()
+  localStorage.setItem('itinerary.session_id', sessionId.value)
+  history.value = []
+  events.value = []
+  taskId.value = ''
+  traceId.value = ''
+  taskStatus.value = ''
+  approvalStatus.value = ''
+  interrupt.value = null
+}
+
+function scheduleTaskPolling() {
+  if (taskTimer) window.clearInterval(taskTimer)
+  taskTimer = window.setInterval(() => {
+    if (taskId.value) refreshTask(true)
+  }, 3000)
+}
+
 function handleEvent(event: SSEEvent) {
   events.value.push(event)
   const data = event.data || {}
   if (data.task_id) taskId.value = data.task_id
   if (data.trace_id) traceId.value = data.trace_id
   if (data.status) taskStatus.value = data.status
+  if (taskId.value) scheduleTaskPolling()
   if (event.type === 'interrupt') {
     interrupt.value = data.human_request || null
     showModify.value = false
@@ -51,7 +101,50 @@ function handleEvent(event: SSEEvent) {
   if (event.type === 'result' || event.type === 'error') {
     if (event.type === 'error') errorText.value = data.message || '请求失败'
     interrupt.value = null
+    void loadHistory()
   }
+}
+
+async function refreshTask(silent = false) {
+  if (!taskId.value) return
+  if (!silent) loadingTask.value = true
+  try {
+    const state = await getJson<TaskState>(`/tasks/${taskId.value}/state`)
+    const values = state.values || {}
+    taskStatus.value = String(values.status || '')
+    approvalStatus.value = String(values.approval?.status || '')
+    if (values.session_id && values.session_id !== sessionId.value) {
+      sessionId.value = String(values.session_id)
+      localStorage.setItem('itinerary.session_id', sessionId.value)
+      await loadHistory()
+    }
+    const next = state.next || []
+    if (next.includes('approval')) {
+      interrupt.value = {
+        kind: 'approval',
+        message: '该任务需要审批，请前往审批工作台处理。',
+      }
+    } else if (next.includes('confirm')) {
+      interrupt.value = {
+        type: 'confirm_option',
+        message: values.pending_human?.message || '请确认方案后继续下单。',
+        options: values.options?.flights || [],
+      }
+    } else if (['COMPLETED', 'CANCELLED', 'FAILED'].includes(taskStatus.value)) {
+      interrupt.value = null
+    }
+  } catch (error) {
+    if (!silent) errorText.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    if (!silent) loadingTask.value = false
+  }
+}
+
+async function loadTask() {
+  if (!loadTaskId.value.trim()) return
+  taskId.value = loadTaskId.value.trim()
+  await refreshTask(false)
+  scheduleTaskPolling()
 }
 
 async function run(path: string, payload: unknown) {
@@ -71,45 +164,19 @@ async function send() {
   taskId.value = ''
   traceId.value = ''
   taskStatus.value = ''
+  approvalStatus.value = ''
   interrupt.value = null
-  await run('/chat', { message: message.value })
-}
-
-async function loadTask() {
-  if (!loadTaskId.value.trim()) return
-  loadingTask.value = true
-  errorText.value = ''
-  try {
-    const state = await getJson<TaskState>(`/tasks/${loadTaskId.value.trim()}/state`)
-    taskId.value = loadTaskId.value.trim()
-    traceId.value = String(state.values.trace_id || '')
-    taskStatus.value = String(state.values.status || '')
-    const next = state.next || []
-    if (next.includes('approval')) {
-      interrupt.value = {
-        kind: 'approval',
-        message: '该任务需要审批，请前往审批工作台处理。',
-      }
-    } else if (next.includes('confirm')) {
-      interrupt.value = {
-        type: 'confirm_option',
-        message: '请确认方案后继续下单。',
-        options: state.values.options?.flights || [],
-      }
-    } else {
-      interrupt.value = null
-    }
-  } catch (error) {
-    errorText.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    loadingTask.value = false
-  }
+  const text = message.value
+  history.value.push({ role: 'user', content: text })
+  await run('/chat', { message: text, session_id: sessionId.value })
+  await loadHistory()
 }
 
 async function resume(payload: unknown) {
   if (!taskId.value) return
   interrupt.value = null
   await run(`/tasks/${taskId.value}/resume`, payload)
+  await refreshTask(true)
 }
 
 async function confirmFirst() {
@@ -132,8 +199,14 @@ async function submitModify() {
   await resume({ action: 'modify', amended_request: request })
 }
 
-onMounted(() => {
-  if (loadTaskId.value) loadTask()
+onMounted(async () => {
+  await loadHistory()
+  if (loadTaskId.value) await loadTask()
+  if (taskId.value) scheduleTaskPolling()
+})
+
+onUnmounted(() => {
+  if (taskTimer) window.clearInterval(taskTimer)
 })
 </script>
 
@@ -142,9 +215,12 @@ onMounted(() => {
     <section class="card">
       <div class="card-header">
         <h2>差旅助手</h2>
-        <span class="badge" :class="user === 'u002' ? 'badge-accent' : ''">
-          {{ user === 'u002' ? '审批人视图' : '员工视图' }}
-        </span>
+        <div class="row">
+          <span class="badge" :class="user === 'u002' ? 'badge-accent' : ''">
+            {{ user === 'u002' ? '审批人视图' : '员工视图' }}
+          </span>
+          <button class="btn btn-ghost small" @click="newSession">新会话</button>
+        </div>
       </div>
 
       <div class="field">
@@ -155,9 +231,22 @@ onMounted(() => {
         </select>
       </div>
 
-      <div class="field">
+      <div class="chat-history" aria-live="polite">
+        <div
+          v-for="(item, index) in history"
+          :key="index"
+          class="message"
+          :class="item.role"
+        >
+          <div class="message-role">{{ item.role }}</div>
+          <div class="message-content">{{ item.content }}</div>
+        </div>
+        <div v-if="!history.length" class="empty">发送一条差旅需求开始对话</div>
+      </div>
+
+      <div class="field" style="margin-top: 14px">
         <label for="message">自然语言需求</label>
-        <textarea id="message" v-model="message" rows="4" :disabled="busy" />
+        <textarea id="message" v-model="message" rows="3" :disabled="busy" />
       </div>
 
       <div class="row">
@@ -169,13 +258,15 @@ onMounted(() => {
 
       <p v-if="errorText" class="error">{{ errorText }}</p>
 
-      <div class="event-list" aria-live="polite">
-        <div v-for="(event, index) in events" :key="index" class="event">
-          <strong>{{ eventLabel(event) }}</strong>
-          <div v-if="event.data?.summary" class="small">{{ event.data.summary }}</div>
+      <details style="margin-top: 14px">
+        <summary>执行事件（{{ events.length }}）</summary>
+        <div class="event-list">
+          <div v-for="(event, index) in events" :key="index" class="event">
+            <strong>{{ eventLabel(event) }}</strong>
+            <div v-if="event.data?.summary" class="small">{{ event.data.summary }}</div>
+          </div>
         </div>
-        <div v-if="!events.length" class="empty">发送一条差旅需求开始对话</div>
-      </div>
+      </details>
     </section>
 
     <aside class="card">
@@ -184,12 +275,7 @@ onMounted(() => {
       <div class="field">
         <label for="load-task">按 task_id 加载（审批后回到此页时用）</label>
         <div class="row">
-          <input
-            id="load-task"
-            v-model="loadTaskId"
-            placeholder="task_id"
-            style="flex: 1"
-          />
+          <input id="load-task" v-model="loadTaskId" placeholder="task_id" style="flex: 1" />
           <button class="btn" :disabled="loadingTask" @click="loadTask">加载</button>
         </div>
       </div>
@@ -197,8 +283,9 @@ onMounted(() => {
       <div v-if="taskId" class="field">
         <div class="small muted">当前任务</div>
         <div class="mono small">{{ taskId }}</div>
-        <div v-if="taskStatus" class="row" style="margin-top: 6px">
-          <span class="badge">{{ taskStatus }}</span>
+        <div class="row" style="margin-top: 6px">
+          <span v-if="taskStatus" class="badge">{{ taskStatus }}</span>
+          <span v-if="approvalStatus" class="badge badge-accent">审批 {{ approvalStatus }}</span>
           <RouterLink v-if="traceId" :to="`/trace/${traceId}`">Trace 回放 →</RouterLink>
         </div>
       </div>
@@ -209,7 +296,7 @@ onMounted(() => {
 
         <template v-if="isApproval">
           <p class="muted small">
-            对话与审批已分离。审批通过后，回到本页点击“加载”继续确认方案。
+            对话与审批已分离。审批通过后，本页会自动轮询任务状态并显示确认操作。
           </p>
           <RouterLink class="btn btn-primary" to="/approvals">前往审批工作台</RouterLink>
         </template>
@@ -246,9 +333,7 @@ onMounted(() => {
         </template>
       </div>
 
-      <p v-else-if="taskId && taskStatus === 'COMPLETED'" class="ok small">
-        任务已完成。
-      </p>
+      <p v-else-if="taskId && taskStatus === 'COMPLETED'" class="ok small">任务已完成。</p>
       <p v-else class="muted small">
         当差标超标或需要确认时，这里会出现审批/确认/修改操作。
       </p>

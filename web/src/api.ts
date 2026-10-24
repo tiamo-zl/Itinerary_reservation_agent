@@ -90,6 +90,12 @@ export interface TaskState {
   next: string[]
 }
 
+export interface ChatMessage {
+  role: string
+  content: string
+  created_at?: string
+}
+
 export interface OverviewData {
   totals: {
     traces: number

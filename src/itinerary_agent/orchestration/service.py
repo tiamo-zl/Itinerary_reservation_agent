@@ -58,7 +58,7 @@ class _NoopSpan:
 
 class OrchestrationService:
     def __init__(self, model, traces, tools, knowledge, control,
-                 checkpointer=None, db=None, rules=None, audit=None):
+                 checkpointer=None, db=None, memory=None, rules=None, audit=None):
         from langgraph.checkpoint.memory import MemorySaver
 
         self.model = model
@@ -67,6 +67,7 @@ class OrchestrationService:
         self.knowledge = knowledge
         self.control = control
         self.db = db
+        self.memory = memory
         self.rules = rules
         self.audit = audit
         # M1 使用内存 Checkpoint；M2 会由容器注入 AsyncSqliteSaver。
@@ -149,6 +150,10 @@ class OrchestrationService:
         """
         state = initial_state(ctx, message)
         config = {"configurable": {"thread_id": state["task_id"]}}
+        if self.memory is not None:
+            await self.memory.append_message(
+                ctx.session_id, state["task_id"], "user", message
+            )
         await self._upsert_task(state, "PLANNING")
         yield Event(type="status", data={
             "task_id": state["task_id"],
@@ -181,15 +186,25 @@ class OrchestrationService:
         final_status = interrupted_status or final.values["status"]
         if interrupted_status is None:
             await self._upsert_task(state, final_status)
+        summary = final.values.get("summary", "")
+        if self.memory is not None and summary:
+            await self.memory.append_message(
+                ctx.session_id, state["task_id"], "assistant", summary
+            )
         yield Event(
             type="result",
             data={
                 "task_id": state["task_id"],
                 "trace_id": state["trace_id"],
                 "status": final_status,
-                "summary": final.values.get("summary", ""),
+                "summary": summary,
             },
         )
+
+    async def get_messages(self, session_id: str, limit: int = 100) -> list[dict]:
+        if self.memory is None:
+            return []
+        return await self.memory.list_messages(session_id, limit)
 
     async def get_state(self, task_id: str) -> dict:
         """返回任务当前 Checkpoint 状态，供聊天页恢复中断/刷新使用。"""
@@ -207,7 +222,7 @@ class OrchestrationService:
         aget_state 可能读到旧快照；resume 前短暂重试，避免误判为空任务。
         """
         snapshot = await self.graph.aget_state(config)
-        for _ in range(10):
+        for _ in range(40):
             if snapshot.values and snapshot.next:
                 return snapshot
             await asyncio.sleep(0.05)
@@ -300,6 +315,11 @@ class OrchestrationService:
             final_status = interrupted_status or final.values["status"]
             # 修改会改变 revision；即使再次停在确认节点也要更新任务索引。
             await self._upsert_task(final.values, final_status)
+            if self.memory is not None and final.values.get("summary"):
+                await self.memory.append_message(
+                    final.values["session_id"], task_id, "assistant",
+                    final.values["summary"],
+                )
             yield Event(
                 type="result", data={"task_id": task_id, "trace_id": ctx.trace_id, "status": final_status}
             )
@@ -352,4 +372,9 @@ class OrchestrationService:
         final_status = interrupted_status or final.values["status"]
         if interrupted_status is None:
             await self._upsert_task(final.values, final_status)
+        if self.memory is not None and final.values.get("summary"):
+            await self.memory.append_message(
+                final.values["session_id"], task_id, "assistant",
+                final.values["summary"],
+            )
         yield Event(type="result", data={"task_id": task_id, "trace_id": ctx.trace_id, "status": final_status})

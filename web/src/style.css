@@ -225,6 +225,34 @@ textarea { resize: vertical; }
 .trace-row:last-child { border-bottom: none; }
 .trace-indent { border-left: 1px solid var(--border); padding-left: 12px; }
 
+.chat-history {
+  display: grid;
+  gap: 10px;
+  min-height: 180px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.message {
+  max-width: 86%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.message.user { margin-left: auto; background: var(--accent-soft); }
+.message.assistant { background: var(--surface); }
+.message-role {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.message-content { white-space: pre-wrap; word-break: break-word; }
+
 .event-list { display: grid; gap: 8px; max-height: 300px; overflow: auto; }
 .event {
   border: 1px solid var(--border);

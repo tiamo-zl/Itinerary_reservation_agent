@@ -31,6 +31,7 @@ class Container:
     knowledge: object | None = None
     control: object | None = None
     checkpointer: object | None = None
+    memory: object | None = None
     rules: object | None = None
     audit: object | None = None
     policy_store: object | None = None
@@ -43,6 +44,11 @@ class Container:
 
     async def start(self) -> None:
         await self.db.connect()
+
+        if self.memory is None:
+            from itinerary_agent.knowledge.memory import MemoryStore
+
+            self.memory = MemoryStore(self.db)
 
         # live 模式才接入真实模型和 Milvus；scripted 模式保持完全离线。
         if self.settings.model_mode == "live":
@@ -172,6 +178,7 @@ class Container:
             control=self.control,
             checkpointer=self.checkpointer,
             db=self.db,
+            memory=self.memory,
             rules=self.rules,
             audit=self.audit,
         )
