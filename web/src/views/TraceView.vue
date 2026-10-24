@@ -134,10 +134,7 @@ onMounted(() => {
           class="trace-row"
         >
           <span class="badge" :class="layerClass(row.span.layer)">{{ row.span.layer }}</span>
-          <div
-            class="trace-main"
-            :style="{ paddingLeft: `${row.depth * 18}px` }"
-          >
+          <div class="trace-main">
             <strong class="mono small">{{ row.span.name }}</strong>
             <div class="small muted">{{ row.span.duration_ms.toFixed(1) }} ms</div>
             <details v-if="Object.keys(row.span.attributes).length">
