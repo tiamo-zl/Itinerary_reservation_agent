@@ -96,6 +96,14 @@ Browser / CLI
 ```text
 src/itinerary_agent/
 ├── api/               # L1 接入网关：路由、中间件、SSE、错误封装
+├── application/       # 用例服务：查询/反馈/权限校验/事务边界
+│   ├── ports.py       # 仓储与外部依赖 Protocol
+│   ├── access.py      # 租户/角色/归属校验
+│   ├── trace_queries.py
+│   ├── conversation_queries.py
+│   ├── approval_queries.py
+│   ├── task_queries.py
+│   └── feedback_service.py
 ├── orchestration/     # L2 编排：graph、state、nodes、subgraphs、checkpoint、service
 ├── tools/             # L3 工具：注册表、契约、风险分级、内置工具、MCP 适配
 ├── knowledge/         # L4 制度解析、条款图、混合检索、规则编译、记忆
@@ -107,26 +115,34 @@ src/itinerary_agent/
 │   ├── interfaces.py
 │   └── mock/
 ├── infra/             # 配置、SQLite、Milvus、依赖装配（组合根）
+│   └── repositories/  # 仓储实现：SQL 只出现在这里
 └── main.py
 ```
 
-`domain/` 是共享模型；`infra/` 是唯一允许 import 具体适配器与 mock 的组合根。
+`domain/` 是共享模型；`application/` 是用例编排与权限边界；`infra/` 是唯一允许 import 具体适配器、mock 和仓储实现的组合根。
 
 ### 4.3 依赖规则
 
 ```text
-api → orchestration → {tools, knowledge, model_gateway, control}
+api → application → {orchestration 接口, domain}
+api → Orchestrator（对话/恢复用例）
+application → ports（仓储 Protocol）← infra/repositories
+orchestration → {tools, knowledge, model_gateway, control}
 tools → adapters
 knowledge → EmbeddingPort（domain）+ adapters（文档源）
 control → domain
 adapters → domain
 observability ← 所有层（只被依赖，不反向依赖业务）
-infra → 所有具体实现
+infra → 所有具体实现 + application（装配）
 ```
 
 硬性约束：
 
-- `api` 只依赖 `Orchestrator` 接口，不知道 LangGraph 的存在；
+- `api` 只依赖应用服务与 `Orchestrator` 接口，不知道 LangGraph 的存在；
+- **`api` 中禁止出现 SQL，也不直接访问 `container.db`**；
+- **仓储实现只在 `infra/repositories/`，SQL 不泄漏到应用服务和控制器**；
+- **租户/角色/任务归属校验在应用服务完成，不在每个 handler 重复实现**；
+- 写用例的事务边界由应用服务控制；
 - `orchestration` 依赖工具/知识/模型/控制的接口，不 import 具体实现或 mock；
 - 任何节点不得直接调用模型 SDK 或外部业务接口；
 - 知识层返回结构化 context pack（条款/表格/引用）与引用 ID，不返回整篇文档；
@@ -221,6 +237,66 @@ class ControlService(Protocol):
 - `trace_exporter`: `sqlite`（默认）。
 
 切换实现只改配置，不改业务代码。
+
+### 4.6 接入层、应用服务与仓储层
+
+生产级项目不应在 HTTP handler 里直接拼 SQL。读写路径统一按四层职责组织：
+
+| 角色 | 位置 | 职责 | 禁止 |
+|---|---|---|---|
+| Controller | `api/` | 解析 HTTP/SSE、构造 `RequestContext`、DTO 映射、错误映射 | SQL、业务规则、事务 |
+| Application Service | `application/` | 用例编排、租户/角色/归属校验、组合多个仓储、事务边界 | 依赖 FastAPI、直接构造 HTTP 响应 |
+| Port | `application/ports.py` | 仓储/外部依赖的 `Protocol` | 具体实现 |
+| Repository | `infra/repositories/` | SQL 与存储细节、查询结果转 DTO | 业务规则、权限判断 |
+
+读路径允许 **Query Service（CQRS-lite）**：不强制构造完整 DDD 聚合，但查询组合、权限过滤和 DTO 转换必须在应用服务中完成。写路径由应用服务控制事务。
+
+`trace_json` 的目标写法：
+
+```python
+# application/trace_queries.py
+class TraceQueryService:
+    def __init__(self, trace_repo: TraceRepository,
+                 task_repo: TaskRepository):
+        self.trace_repo = trace_repo
+        self.task_repo = task_repo
+
+    async def get_trace(self, ctx: RequestContext, trace_id: str) -> TraceDetail:
+        task = await self.task_repo.find_by_trace(ctx.tenant_id, trace_id)
+        if task is None:
+            raise NotFound("trace")
+        if not can_view_task(ctx, task):
+            raise Forbidden("trace")
+        spans = await self.trace_repo.load_spans(ctx.tenant_id, trace_id)
+        return TraceDetail(trace_id=trace_id, task=task, spans=build_tree(spans))
+```
+
+```python
+# infra/repositories/trace_repository.py
+class SqliteTraceRepository:
+    def __init__(self, db: Database):
+        self.db = db
+
+    async def load_spans(self, tenant_id: str, trace_id: str):
+        # 只有这里允许出现 traces/spans 的 SQL 和列名
+        ...
+```
+
+```python
+# api/routes.py
+@router.get("/traces/{trace_id}")
+async def trace_json(trace_id: str, request: Request):
+    ctx = build_context(request)
+    return await container.trace_queries.get_trace(ctx, trace_id)
+```
+
+验收约束：
+
+- 对 `api/` 做静态检查，不允许出现 `container.db`、`SELECT`、`INSERT`、`UPDATE`、`DELETE`；
+- 应用服务只依赖 `Protocol`，可注入 fake repository 做单元测试；
+- Repository 返回查询 DTO，不把 ORM/SQLite Row 直接传到 HTTP；
+- 权限错误使用应用层异常，由控制器统一映射为 403/404；
+- 读写都按 `tenant_id` 隔离，管理员跨租户查看也需要显式授权。
 
 ## 5. 领域模型与任务状态机
 
