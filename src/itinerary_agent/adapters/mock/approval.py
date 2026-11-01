@@ -1,7 +1,8 @@
 """模拟审批系统。
 
-真实环境会接企业 BPM/审批平台；这里用 SQLite + 延时自动通过模拟。
+真实环境会接企业 BPM/审批平台；这里用可注入的存储 + 延时自动通过模拟。
 同一 task_id + revision 的重复提交是幂等的，避免 resume 时重复建单。
+SQL 在 infra/repositories；适配器只依赖 ApprovalStore 协议。
 """
 
 import asyncio
@@ -9,43 +10,33 @@ import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from itinerary_agent.adapters.interfaces import ApprovalStore
 from itinerary_agent.domain.models import ApprovalRef
-from itinerary_agent.infra.db import Database
 
 
 class MockApprovalSystem:
-    def __init__(self, db: Database, auto_approve_delay: float = 5.0,
+    def __init__(self, store: ApprovalStore, auto_approve_delay: float = 5.0,
                  auto_approve: bool = False):
-        self.db = db
+        self.store = store
         self.delay = auto_approve_delay
         self.auto_approve = auto_approve
         self._tasks: set[asyncio.Task] = set()
 
     async def submit(self, task_id: str, revision: int, payload: dict) -> ApprovalRef:
-        existing = await self.db.fetchone(
-            "SELECT approval_id FROM approvals WHERE task_id = ? AND revision = ? "
-            "ORDER BY created_at DESC LIMIT 1",
-            (task_id, revision),
-        )
+        existing = await self.store.find_by_task_revision(task_id, revision)
         if existing:
             return await self.get(existing["approval_id"])
 
         approval_id = uuid4().hex
         now = datetime.now(UTC).isoformat()
-        inserted = await self.db.execute(
-            "INSERT INTO approvals (approval_id, task_id, revision, status, comment, "
-            "payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT (task_id, revision) DO NOTHING",
-            (
-                approval_id, task_id, revision, "pending", None,
-                json.dumps(payload, ensure_ascii=False), now, now,
-            ),
+        inserted = await self.store.insert_pending(
+            approval_id, task_id, revision,
+            json.dumps(payload, ensure_ascii=False), now,
         )
         if inserted == 0:
             # 并发提交同一 task/revision 时复用已存在的审批单。
-            existing = await self.db.fetchone(
-                "SELECT approval_id FROM approvals WHERE task_id = ? AND revision = ?",
-                (task_id, revision),
+            existing = await self.store.find_by_task_revision(
+                task_id, revision
             )
             if existing:
                 return await self.get(existing["approval_id"])
@@ -67,16 +58,12 @@ class MockApprovalSystem:
         self._tasks.clear()
 
     async def decide(self, approval_id: str, status: str, comment: str) -> None:
-        await self.db.execute(
-            "UPDATE approvals SET status = ?, comment = ?, updated_at = ? "
-            "WHERE approval_id = ?",
-            (status, comment, datetime.now(UTC).isoformat(), approval_id),
-        )
+        await self.store.decide(approval_id, status, comment)
 
     async def get(self, approval_id: str) -> ApprovalRef:
-        row = await self.db.fetchone(
-            "SELECT * FROM approvals WHERE approval_id = ?", (approval_id,)
-        )
+        row = await self.store.get(approval_id)
+        if row is None:
+            raise LookupError(f"approval not found: {approval_id}")
         created_at = row["created_at"]
         if not isinstance(created_at, datetime):
             created_at = datetime.fromisoformat(created_at)

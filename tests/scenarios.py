@@ -12,7 +12,7 @@ from itinerary_agent.api.app import create_app
 from itinerary_agent.domain.models import PolicyContext, PolicyTable
 from itinerary_agent.infra.container import build_container
 from itinerary_agent.infra.database import Database
-from itinerary_agent.knowledge.policy_store import PolicyStore
+from itinerary_agent.infra.repositories import PostgresPolicyStore
 from itinerary_agent.knowledge.service import KnowledgeService
 from tests.db_utils import TEST_DATABASE_URL, make_test_settings
 
@@ -114,7 +114,7 @@ async def make_policy_service(tmp_path, clauses, dense_ids, tables=None):
     """构造带条款/边/表格的 KnowledgeService，用于制度场景。"""
     db = Database(TEST_DATABASE_URL)
     await db.connect()
-    store = PolicyStore(db)
+    store = PostgresPolicyStore(db)
     await store.init()
     for clause in clauses:
         await store.upsert_clause({

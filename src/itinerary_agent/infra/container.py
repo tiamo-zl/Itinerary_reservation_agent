@@ -49,8 +49,13 @@ class Container:
     trace_repo: object | None = None
     conversation_repo: object | None = None
     approval_repo: object | None = None
+    idempotency_repo: object | None = None
     feedback_repo: object | None = None
     outbox_repo: object | None = None
+    message_repo: object | None = None
+    memory_repo: object | None = None
+    span_repo: object | None = None
+    model_call_repo: object | None = None
     outbox_relay: object | None = None
     task_queries: object | None = None
     trace_queries: object | None = None
@@ -85,10 +90,29 @@ class Container:
             self.redis = Redis.from_url(
                 self.settings.redis_url, decode_responses=True
             )
+        from itinerary_agent.infra.repositories import (
+            PostgresApprovalRepository,
+            PostgresIdempotencyRepository,
+            PostgresMemoryRepository,
+            PostgresMessageRepository,
+        )
+
+        self.message_repo = (
+            self.message_repo or PostgresMessageRepository(self.db)
+        )
+        self.memory_repo = (
+            self.memory_repo or PostgresMemoryRepository(self.db)
+        )
+        self.approval_repo = (
+            self.approval_repo or PostgresApprovalRepository(self.db)
+        )
+        self.idempotency_repo = (
+            self.idempotency_repo or PostgresIdempotencyRepository(self.db)
+        )
         if self.memory is None:
             from itinerary_agent.knowledge.memory import MemoryStore
 
-            self.memory = MemoryStore(self.db)
+            self.memory = MemoryStore(self.message_repo, self.memory_repo)
 
         # 步骤 2：live 模式才接入真实模型和 Milvus；scripted 保持离线。
         if self.settings.model_mode == "live":
@@ -99,14 +123,14 @@ class Container:
             from itinerary_agent.adapters.mock.approval import MockApprovalSystem
 
             self.approvals = MockApprovalSystem(
-                self.db,
+                self.approval_repo,
                 self.settings.mock_approval_delay_seconds,
                 auto_approve=self.settings.mock_approval_auto_approve,
             )
         if self.booking is None:
             from itinerary_agent.adapters.mock.booking import MockBookingSystem
 
-            self.booking = MockBookingSystem(self.db)
+            self.booking = MockBookingSystem(self.idempotency_repo)
 
         # 步骤 4：没有显式注入工具时，默认装配 mock 外部系统。
         if self.tools is None:
@@ -114,9 +138,9 @@ class Container:
 
         # 步骤 5：控制层（规则、审计、动作准入）。
         if self.audit is None:
-            from itinerary_agent.control.audit import AuditLog
+            from itinerary_agent.infra.repositories import PostgresAuditLog
 
-            self.audit = AuditLog(self.db)
+            self.audit = PostgresAuditLog(self.db)
         if self.rules is None:
             from itinerary_agent.control.rules import load_rules
 
@@ -169,7 +193,8 @@ class Container:
                 )
 
                 self.poller = ApprovalPoller(
-                    self.db, self.approvals, self.orchestrator
+                    self.task_repo, self.approval_repo,
+                    self.approvals, self.orchestrator,
                 )
                 self.poller.start()
 
@@ -210,10 +235,10 @@ class Container:
     async def _init_live_model_and_knowledge(self) -> None:
         """按 live 模式装配真实模型网关与制度检索。"""
         if self.llm_cache is None:
-            from itinerary_agent.model_gateway.cache import (
+            from itinerary_agent.infra.repositories.llm_cache_repository import (
                 PostgresLLMCache,
-                RedisLLMCache,
             )
+            from itinerary_agent.model_gateway.cache import RedisLLMCache
 
             backend = self.settings.llm_cache_backend
             if backend in {"auto", "redis"} and self.redis is not None:
@@ -227,21 +252,28 @@ class Container:
                     self.db, self.settings.llm_cache_ttl_seconds
                 )
 
+        if self.model_call_repo is None:
+            from itinerary_agent.infra.repositories import (
+                PostgresModelCallRepository,
+            )
+
+            self.model_call_repo = PostgresModelCallRepository(self.db)
+
         if self.model is None:
             from itinerary_agent.model_gateway.gateway import OpenAIChatGateway
 
             self.model = OpenAIChatGateway(
-                self.settings, self.db, traces=self.traces,
-                cache=self.llm_cache,
+                self.settings, ledger=self.model_call_repo,
+                traces=self.traces, cache=self.llm_cache,
             )
 
         if self.knowledge is None:
+            from itinerary_agent.infra.repositories import PostgresPolicyStore
             from itinerary_agent.knowledge.milvus_store import MilvusClauseStore
-            from itinerary_agent.knowledge.policy_store import PolicyStore
             from itinerary_agent.knowledge.service import KnowledgeService
             from itinerary_agent.model_gateway.embeddings import DashScopeEmbedder
 
-            self.policy_store = PolicyStore(self.db)
+            self.policy_store = PostgresPolicyStore(self.db)
             await self.policy_store.init()
             self.knowledge = KnowledgeService(
                 embedder=DashScopeEmbedder(self.settings),
@@ -289,7 +321,6 @@ class Container:
             knowledge=self.knowledge,
             control=self.control,
             checkpointer=self.checkpointer,
-            db=self.db,
             memory=self.memory,
             rules=self.rules,
             audit=self.audit,
@@ -385,8 +416,14 @@ def build_container(settings: Settings | None = None) -> Container:
         min_size=settings.database_pool_min,
         max_size=settings.database_pool_max,
     )
+    from itinerary_agent.infra.repositories.span_repository import (
+        PostgresSpanRepository,
+    )
+
+    span_repo = PostgresSpanRepository(db)
     return Container(
         settings=settings,
         db=db,
-        traces=TraceRecorder(db, otel_enabled=settings.otel_enabled),
+        span_repo=span_repo,
+        traces=TraceRecorder(span_repo, otel_enabled=settings.otel_enabled),
     )

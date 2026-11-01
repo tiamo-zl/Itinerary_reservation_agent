@@ -7,20 +7,25 @@ PostgreSQL 的 spans 投影，供自建控制台查询。写入失败绝不影�
 
 from __future__ import annotations
 
-import json
 import logging
 from contextlib import asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from time import perf_counter
+from typing import Protocol
 from uuid import uuid4
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from itinerary_agent.infra.db import Database
-
 logger = logging.getLogger(__name__)
+
+
+class SpanStore(Protocol):
+    async def write_span(self, span_id: str, trace_id: str,
+                         parent_id: str | None, name: str, layer: str,
+                         status: str, started_at: datetime,
+                         duration_ms: float, attributes: dict) -> None: ...
 
 # ContextVar 让 trace/span 上下文在 async 调用链中自动传递，
 # 不需要每层函数都显式接收 trace_id 参数。
@@ -44,8 +49,9 @@ def _otel_attributes(attributes: dict) -> dict:
 class TraceRecorder:
     """一次用户请求 = 一个 trace；每个层/节点操作 = 一个 span。"""
 
-    def __init__(self, db: Database, otel_enabled: bool = False):
-        self.db = db
+    def __init__(self, span_store: SpanStore,
+                 otel_enabled: bool = False):
+        self.span_store = span_store
         self._tracer = (
             trace.get_tracer("itinerary_agent") if otel_enabled else None
         )
@@ -121,15 +127,9 @@ class TraceRecorder:
                           status, started_at, duration_ms, attributes) -> None:
         """持久化 span；观测写入不允许反向破坏业务主流程。"""
         try:
-            await self.db.execute(
-                "INSERT INTO spans (span_id, trace_id, parent_span_id, name, layer, "
-                "status, start_time, duration_ms, attributes) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    span_id, trace_id, parent_id, name, layer, status,
-                    started_at.isoformat(), duration_ms,
-                    json.dumps(attributes, ensure_ascii=False, default=str),
-                ),
+            await self.span_store.write_span(
+                span_id, trace_id, parent_id, name, layer, status,
+                started_at, duration_ms, attributes,
             )
         except Exception:
             logger.exception("failed to persist span %s", name)

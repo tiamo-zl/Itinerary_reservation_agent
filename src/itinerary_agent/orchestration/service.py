@@ -6,7 +6,6 @@ M1 只实现 start_turn，M2 增加 interrupt/resume，M4 增加审批与下单�
 
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
 from uuid import uuid4
 
 from itinerary_agent.domain.models import (
@@ -59,7 +58,7 @@ class _NoopSpan:
 
 class OrchestrationService:
     def __init__(self, model, traces, tools, knowledge, control,
-                 checkpointer=None, db=None, memory=None, rules=None,
+                 checkpointer=None, memory=None, rules=None,
                  audit=None, task_repo=None, lease_seconds: int = 300):
         from langgraph.checkpoint.memory import MemorySaver
 
@@ -68,7 +67,6 @@ class OrchestrationService:
         self.tools = tools
         self.knowledge = knowledge
         self.control = control
-        self.db = db
         self.memory = memory
         self.rules = rules
         self.audit = audit
@@ -99,27 +97,18 @@ class OrchestrationService:
         )
 
     async def _upsert_task(self, state: dict, status: str) -> None:
-        """把任务索引写入 SQLite；完整状态仍由 Checkpoint 保存。"""
-        if self.db is None:
+        """把任务索引写入仓储；完整状态仍由 Checkpoint 保存。"""
+        if self.task_repo is None:
             return
-        await self.db.execute(
-            "INSERT INTO tasks (task_id, tenant_id, user_id, status, revision, "
-            "trace_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(task_id) DO UPDATE SET "
-            "status=excluded.status, revision=excluded.revision, "
-            "trace_id=excluded.trace_id, updated_at=excluded.updated_at",
-            (state["task_id"], state["tenant_id"], state["user_id"], status,
-             state["revision"], state.get("trace_id"),
-             datetime.now(UTC).isoformat()),
+        await self.task_repo.upsert(
+            state["task_id"], state["tenant_id"], state["user_id"],
+            status, state["revision"], state.get("trace_id"),
         )
 
     async def _set_task_status(self, task_id: str, status: str) -> None:
-        if self.db is None:
+        if self.task_repo is None:
             return
-        await self.db.execute(
-            "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
-            (status, datetime.now(UTC).isoformat(), task_id),
-        )
+        await self.task_repo.set_status(task_id, status)
 
     async def guarded_invoke(self, state: dict, action: str, name: str,
                              args: dict) -> ToolResult:

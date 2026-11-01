@@ -1,45 +1,44 @@
 """短期会话记忆与长期用户偏好。
 
-工作记忆不在这里：它由 LangGraph Checkpoint 保存。
+SQL 已下沉到 infra/repositories；这里只做领域映射与组合。
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
+from typing import Protocol
 
 from itinerary_agent.domain.models import UserMemory
-from itinerary_agent.infra.db import Database
+
+
+class MessageStorePort(Protocol):
+    async def append(self, session_id: str, task_id: str | None,
+                     role: str, content: str) -> None: ...
+    async def recent(self, session_id: str, limit: int) -> list[dict]: ...
+    async def list(self, session_id: str, limit: int) -> list[dict]: ...
+
+
+class MemoryStorePort(Protocol):
+    async def upsert(self, memory: UserMemory) -> None: ...
+    async def get(self, tenant_id: str, user_id: str,
+                  kinds: list[str]) -> list[dict]: ...
 
 
 def _as_datetime(value) -> datetime:
-    """PostgreSQL 返回 datetime；旧数据可能是 ISO 字符串。"""
+    """PostgreSQL 返回 datetime；兼容旧数据的 ISO 字符串。"""
     return value if isinstance(value, datetime) else datetime.fromisoformat(value)
 
 
 class MemoryStore:
-    def __init__(self, db: Database):
-        self.db = db
+    def __init__(self, messages: MessageStorePort,
+                 memories: MemoryStorePort):
+        self.messages = messages
+        self.memories = memories
 
     async def upsert(self, memory: UserMemory) -> None:
-        await self.db.execute(
-            "INSERT INTO user_memories (memory_id, tenant_id, user_id, kind, key, value, "
-            "confidence, source_task_id, updated_at, expires_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(memory_id) DO UPDATE SET value=excluded.value, "
-            "confidence=excluded.confidence, updated_at=excluded.updated_at",
-            (
-                memory.memory_id, memory.tenant_id, memory.user_id, memory.kind,
-                memory.key, memory.value, memory.confidence, memory.source_task_id,
-                memory.updated_at.isoformat(),
-                memory.expires_at.isoformat() if memory.expires_at else None,
-            ),
-        )
+        await self.memories.upsert(memory)
 
-    async def get(self, tenant_id: str, user_id: str, kinds: list[str]) -> list[UserMemory]:
-        placeholders = ",".join("?" for _ in kinds)
-        rows = await self.db.fetchall(
-            f"SELECT * FROM user_memories WHERE tenant_id = ? AND user_id = ? "
-            f"AND kind IN ({placeholders})",
-            (tenant_id, user_id, *kinds),
-        )
+    async def get(self, tenant_id: str, user_id: str,
+                  kinds: list[str]) -> list[UserMemory]:
+        rows = await self.memories.get(tenant_id, user_id, kinds)
         return [
             UserMemory(
                 memory_id=row["memory_id"], tenant_id=row["tenant_id"],
@@ -57,27 +56,12 @@ class MemoryStore:
 
     async def append_message(self, session_id: str, task_id: str | None,
                              role: str, content: str) -> None:
-        await self.db.execute(
-            "INSERT INTO messages (session_id, task_id, role, content, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (session_id, task_id, role, content, datetime.now(UTC).isoformat()),
-        )
+        await self.messages.append(session_id, task_id, role, content)
 
-    async def recent_messages(self, session_id: str, limit: int = 10) -> list[dict]:
-        rows = await self.db.fetchall(
-            "SELECT role, content FROM messages WHERE session_id = ? "
-            "ORDER BY id DESC LIMIT ?",
-            (session_id, limit),
-        )
-        return [
-            {"role": row["role"], "content": row["content"]}
-            for row in reversed(rows)
-        ]
+    async def recent_messages(self, session_id: str,
+                              limit: int = 10) -> list[dict]:
+        return await self.messages.recent(session_id, limit)
 
-    async def list_messages(self, session_id: str, limit: int = 100) -> list[dict]:
-        rows = await self.db.fetchall(
-            "SELECT role, content, task_id, created_at FROM messages "
-            "WHERE session_id = ? ORDER BY id ASC LIMIT ?",
-            (session_id, limit),
-        )
-        return [dict(row) for row in rows]
+    async def list_messages(self, session_id: str,
+                            limit: int = 100) -> list[dict]:
+        return await self.messages.list(session_id, limit)

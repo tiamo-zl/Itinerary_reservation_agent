@@ -48,3 +48,15 @@ def test_application_does_not_depend_on_http_or_infra():
             assert not any(name.startswith(forbidden) for name in names), (
                 path, forbidden
             )
+
+
+def test_sql_only_lives_in_repositories():
+    """除迁移和连接层外，业务代码不再直接拼 SQL。"""
+    sql = re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE)\b")
+    for path in Path("src/itinerary_agent").rglob("*.py"):
+        rel = path.as_posix()
+        if "infra/repositories/" in rel or "infra/migrations/" in rel:
+            continue
+        if path.name in {"database.py", "db.py"}:
+            continue
+        assert not sql.search(path.read_text(encoding="utf-8")), path

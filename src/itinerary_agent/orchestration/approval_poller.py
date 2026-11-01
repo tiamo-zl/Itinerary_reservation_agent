@@ -10,8 +10,10 @@ from itinerary_agent.domain.models import ApprovalStatus, Decision, RequestConte
 
 
 class ApprovalPoller:
-    def __init__(self, db, approvals, orchestrator, interval: float = 2.0):
-        self.db = db
+    def __init__(self, task_repo, approval_repo, approvals, orchestrator,
+                 interval: float = 2.0):
+        self.task_repo = task_repo
+        self.approval_repo = approval_repo
         self.approvals = approvals
         self.orchestrator = orchestrator
         self.interval = interval
@@ -43,20 +45,11 @@ class ApprovalPoller:
             await asyncio.sleep(self.interval)
 
             # 步骤 1：只处理“任务仍在等待 + 审批已有结论”的组合。
-            rows = await self.db.fetchall(
-                "SELECT a.approval_id, a.task_id, a.status, t.tenant_id, "
-                "t.user_id, t.trace_id "
-                "FROM approvals a JOIN tasks t ON t.task_id = a.task_id "
-                "WHERE t.status = 'WAITING_APPROVAL' "
-                "AND a.status IN ('approved', 'rejected')"
-            )
+            rows = await self.approval_repo.list_ready_for_resume()
 
             for row in rows:
                 # 步骤 2：先改状态，避免下一轮重复恢复同一任务。
-                await self.db.execute(
-                    "UPDATE tasks SET status = 'EXECUTING' WHERE task_id = ?",
-                    (row["task_id"],),
-                )
+                await self.task_repo.set_status(row["task_id"], "EXECUTING")
 
                 # 步骤 3：恢复上下文必须复用任务 trace，不能另起 trace。
                 ctx = RequestContext(
@@ -78,8 +71,6 @@ class ApprovalPoller:
                         pass
                 except Exception:  # noqa: BLE001 - 恢复失败时回滚状态等待重试
                     # 步骤 5：失败回滚，避免任务卡在 EXECUTING。
-                    await self.db.execute(
-                        "UPDATE tasks SET status = 'WAITING_APPROVAL' "
-                        "WHERE task_id = ?",
-                        (row["task_id"],),
+                    await self.task_repo.set_status(
+                        row["task_id"], "WAITING_APPROVAL"
                     )

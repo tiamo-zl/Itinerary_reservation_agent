@@ -15,7 +15,7 @@ from itinerary_agent.domain.models import PolicyTable
 from itinerary_agent.infra.db import Database
 
 
-class PolicyStore:
+class PostgresPolicyStore:
     def __init__(self, db: Database):
         self.db = db
 

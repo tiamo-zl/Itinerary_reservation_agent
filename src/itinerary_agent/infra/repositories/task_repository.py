@@ -41,6 +41,25 @@ class PostgresTaskRepository:
         )
         return dict(row) if row else None
 
+    async def upsert(self, task_id: str, tenant_id: str, user_id: str,
+                     status: str, revision: int,
+                     trace_id: str | None) -> None:
+        """写入/更新任务索引；完整状态仍在 Checkpoint。"""
+        await self.db.execute(
+            "INSERT INTO tasks (task_id, tenant_id, user_id, status, revision, "
+            "trace_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, now()) "
+            "ON CONFLICT (task_id) DO UPDATE SET "
+            "status=EXCLUDED.status, revision=EXCLUDED.revision, "
+            "trace_id=EXCLUDED.trace_id, updated_at=now()",
+            (task_id, tenant_id, user_id, status, revision, trace_id),
+        )
+
+    async def set_status(self, task_id: str, status: str) -> None:
+        await self.db.execute(
+            "UPDATE tasks SET status = ?, updated_at = now() WHERE task_id = ?",
+            (status, task_id),
+        )
+
     async def acquire_resume_lease(self, task_id: str, owner: str,
                                    lease_seconds: int) -> dict | None:
         """原子获取任务恢复租约。

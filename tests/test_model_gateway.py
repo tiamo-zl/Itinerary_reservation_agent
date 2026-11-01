@@ -4,6 +4,10 @@ import pytest
 
 from itinerary_agent.domain.models import CallContext, ModelTier
 from itinerary_agent.infra.config import Settings
+from itinerary_agent.infra.repositories import PostgresModelCallRepository
+from itinerary_agent.infra.repositories.llm_cache_repository import (
+    PostgresLLMCache,
+)
 from itinerary_agent.model_gateway.errors import ModelUnavailable
 from itinerary_agent.model_gateway.gateway import OpenAIChatGateway
 from itinerary_agent.model_gateway.router import resolve_model
@@ -128,7 +132,9 @@ async def test_cache_hit_and_ledger(tmp_path):
     ])
     gateway = OpenAIChatGateway(
         _settings(model_fallback_enabled=False),
-        db=db, primary_client=primary,
+        ledger=PostgresModelCallRepository(db),
+        cache=PostgresLLMCache(db),
+        primary_client=primary,
     )
     ctx = _ctx(purpose="understand")
     messages = [{"role": "user", "content": "去北京"}]

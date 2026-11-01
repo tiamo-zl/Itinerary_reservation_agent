@@ -8,16 +8,13 @@ import asyncio
 import hashlib
 import json
 import logging
-from datetime import UTC, datetime
 from time import perf_counter
-from uuid import uuid4
 
 from openai import AsyncOpenAI
 
 from itinerary_agent.domain.models import CallContext, Completion, ModelTier
 from itinerary_agent.infra.config import Settings
-from itinerary_agent.infra.db import Database
-from itinerary_agent.model_gateway.cache import LLMCache, PostgresLLMCache
+from itinerary_agent.model_gateway.cache import LLMCache
 from itinerary_agent.model_gateway.errors import ModelOutputError, ModelUnavailable
 from itinerary_agent.model_gateway.json_output import parse_and_validate
 from itinerary_agent.model_gateway.pricing import PriceTable
@@ -54,11 +51,11 @@ class _NullSpan:
 
 
 class OpenAIChatGateway:
-    def __init__(self, settings: Settings, db: Database | None = None,
-                 traces=None, primary_client=None, fallback_client=None,
+    def __init__(self, settings: Settings, ledger=None, traces=None,
+                 primary_client=None, fallback_client=None,
                  cache: LLMCache | None = None):
         self.settings = settings
-        self.db = db
+        self.ledger = ledger
         self.traces = traces
         self.client = primary_client or AsyncOpenAI(
             base_url=settings.deepseek_base_url,
@@ -79,12 +76,8 @@ class OpenAIChatGateway:
         else:
             self.fallback_client = None
         self.pricing = PriceTable.load(settings.model_pricing_file)
-        # 默认保留 PostgreSQL 缓存，便于单测/无 Redis 环境；
-        # 生产由容器注入 Redis 实现。
-        self.cache = cache or (
-            PostgresLLMCache(db, settings.llm_cache_ttl_seconds)
-            if db is not None else None
-        )
+        # 缓存实现由容器注入：生产 Redis，单测/无 Redis 时可注入 Postgres。
+        self.cache = cache
 
     def _candidates(self, tier: ModelTier) -> list[tuple[str, object, str]]:
         """主提供方优先，备用提供方只在配置了 key 时加入。"""
@@ -286,22 +279,26 @@ class OpenAIChatGateway:
                       fallback_from: str | None = None,
                       attempt: int = 1) -> None:
         """写调用账本；观测失败不能反向破坏业务。"""
-        if self.db is None:
+        if self.ledger is None:
             return
         try:
-            await self.db.execute(
-                "INSERT INTO llm_calls (call_id, trace_id, task_id, tenant_id, "
-                "purpose, model, prompt_tokens, completion_tokens, cost_usd, "
-                "duration_ms, created_at, provider, prompt_version, status, "
-                "error_code, cache_hit, fallback_from, attempt) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    uuid4().hex, ctx.trace_id, ctx.task_id, ctx.tenant_id,
-                    ctx.purpose, model, prompt_tokens, completion_tokens,
-                    cost, duration_ms, datetime.now(UTC).isoformat(),
-                    provider, ctx.prompt_version, status, error_code,
-                    cache_hit, fallback_from, attempt,
-                ),
+            await self.ledger.record(
+                trace_id=ctx.trace_id,
+                task_id=ctx.task_id,
+                tenant_id=ctx.tenant_id,
+                purpose=ctx.purpose,
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_usd=cost,
+                duration_ms=duration_ms,
+                provider=provider,
+                prompt_version=ctx.prompt_version,
+                status=status,
+                error_code=error_code,
+                cache_hit=cache_hit,
+                fallback_from=fallback_from,
+                attempt=attempt,
             )
         except Exception:
             logger.exception("llm call ledger write failed")

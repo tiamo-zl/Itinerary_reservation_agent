@@ -3,7 +3,7 @@ from itinerary_agent.domain.models import (
     PolicyContext,
     PolicyTable,
 )
-from itinerary_agent.knowledge.policy_store import PolicyStore
+from itinerary_agent.infra.repositories import PostgresPolicyStore
 from itinerary_agent.knowledge.service import KnowledgeService
 from tests.db_utils import open_test_db
 
@@ -26,7 +26,7 @@ class FakeDenseStore:
 
 async def _make_store(tmp_path):
     db = await open_test_db()
-    store = PolicyStore(db)
+    store = PostgresPolicyStore(db)
     await store.init()
     for clause_id, text, table_id in [
         ("c1", "一线城市住宿上限 500 元，具体见附表二。", "t1"),
