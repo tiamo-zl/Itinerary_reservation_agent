@@ -76,8 +76,8 @@ make typecheck
 make obs-up    # 自动读取 Langfuse key，启动 core + observability
 ```
 
-- Grafana：http://127.0.0.1:13001（admin/admin）
-- Prometheus：http://127.0.0.1:19091
+- Grafana：http://127.0.0.1:13000（monitoring-stack，含 `Itinerary Agent` 看板）
+- Prometheus：http://127.0.0.1:19090
 - SkyWalking UI：http://127.0.0.1:18080
 - Kibana：http://127.0.0.1:5601（data stream `logs-itinerary`）
 - Langfuse：http://127.0.0.1:3030

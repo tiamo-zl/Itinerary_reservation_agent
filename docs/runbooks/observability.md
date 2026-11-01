@@ -30,8 +30,8 @@ docker compose --profile core --profile observability up -d
 
 | 系统 | 地址 | 用途 |
 |---|---|---|
-| Grafana | http://127.0.0.1:13001 | 指标看板（admin/admin，可通过 `GRAFANA_ADMIN_PASSWORD` 覆盖） |
-| Prometheus | http://127.0.0.1:19091 | 原始指标与告警规则 |
+| Grafana | http://127.0.0.1:13000 | monitoring-stack，含 `Itinerary Agent` 看板 |
+| Prometheus | http://127.0.0.1:19090 | 原始指标与告警规则 |
 | SkyWalking UI | http://127.0.0.1:18080 | Trace 查询 |
 | Kibana | http://127.0.0.1:5601 | 日志检索，data stream `logs-itinerary` |
 | Langfuse | http://127.0.0.1:3030 | Agent/LLM span 分析 |
@@ -74,7 +74,7 @@ API/worker --OTLP--> Collector
 
 ### 指标为空
 
-- `curl http://127.0.0.1:19091/api/v1/targets` 应显示三个 job 都是 `up`；
+- `curl http://127.0.0.1:19090/api/v1/targets` 应显示 `itinerary-api`、`itinerary-worker`、`otel-collector` 都是 `up`；
 - 应用 `/metrics` 必须可访问；worker 的端口是 8001。
 
 ## 本地 Docker 文件布局（2026-11-01 迁移）
