@@ -1,19 +1,31 @@
 """HTTP 应用入口。
 
-网关层只做接入相关的事情（路由、健康检查、后续的鉴权/SSE），
+网关层只做接入相关的事情（路由、鉴权、限流、健康检查、SSE），
 不直接持有 LangGraph 状态，也不调用外部业务系统。
 """
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import perf_counter
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from itinerary_agent.api.auth import PUBLIC_PATHS, AuthError, AuthService
 from itinerary_agent.api.routes import build_router
 from itinerary_agent.application.errors import AppError
 from itinerary_agent.infra.container import Container
+from itinerary_agent.observability.logging import (
+    bind_request_context,
+    clear_request_context,
+    configure_logging,
+)
+from itinerary_agent.observability.metrics import RATE_LIMITED, observe_http
+from itinerary_agent.observability.telemetry import (
+    setup_telemetry,
+    shutdown_telemetry,
+)
 
 
 def _rate_limit_scope(request: Request) -> str | None:
@@ -30,11 +42,15 @@ def _rate_limit_scope(request: Request) -> str | None:
     return None
 
 
-def create_app(container: Container) -> FastAPI:
-    """创建 FastAPI 应用，并把容器绑定到应用生命周期。
+def _route_label(request: Request) -> str:
+    """优先使用路由模板，避免 /tasks/{id} 造成高基数。"""
+    route = request.scope.get("route")
+    return getattr(route, "path", request.url.path)
 
-    测试里传入临时路径的 Container，避免污染 ./data。
-    """
+
+def create_app(container: Container) -> FastAPI:
+    """创建 FastAPI 应用，并把容器绑定到应用生命周期。"""
+    configure_logging(container.settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -42,49 +58,77 @@ def create_app(container: Container) -> FastAPI:
         await container.start()
         yield
         await container.stop()
+        shutdown_telemetry()
 
     app = FastAPI(title="Itinerary Reservation Agent", lifespan=lifespan)
     app.state.container = container
+    setup_telemetry(container.settings, app)
     auth_service = AuthService(container.settings)
 
     @app.middleware("http")
     async def authenticate(request: Request, call_next):
-        """先认证再进业务路由；健康检查与静态页保持公开。"""
+        """认证 → 限流 → 业务路由；健康检查与静态页保持公开。"""
+        started = perf_counter()
         if request.url.path in PUBLIC_PATHS:
-            return await call_next(request)
+            response = await call_next(request)
+            observe_http(
+                request.method, _route_label(request),
+                response.status_code, perf_counter() - started,
+            )
+            return response
+
         try:
             request.state.ctx = await auth_service.authenticate(request)
         except AuthError as exc:
+            observe_http(
+                request.method, request.url.path, 401,
+                perf_counter() - started,
+            )
             return JSONResponse(
                 status_code=401,
                 content={"error": exc.message, "code": exc.code},
             )
 
         ctx = request.state.ctx
-        scope = _rate_limit_scope(request)
-        decision = None
-        if scope is not None and container.rate_limiter is not None:
-            decision = await container.rate_limiter.check(
-                scope, f"{ctx.tenant_id}:{ctx.user_id}"
-            )
-            if not decision.allowed:
-                return JSONResponse(
-                    status_code=429,
-                    content={
-                        "error": "too many requests",
-                        "code": "RATE_LIMITED",
-                    },
-                    headers={"Retry-After": str(decision.retry_after or 1)},
+        bind_request_context(ctx.request_id, ctx.tenant_id, ctx.user_id)
+        try:
+            scope = _rate_limit_scope(request)
+            decision = None
+            if scope is not None and container.rate_limiter is not None:
+                decision = await container.rate_limiter.check(
+                    scope, f"{ctx.tenant_id}:{ctx.user_id}"
                 )
+                if not decision.allowed:
+                    RATE_LIMITED.labels(scope=scope).inc()
+                    observe_http(
+                        request.method, request.url.path, 429,
+                        perf_counter() - started,
+                    )
+                    return JSONResponse(
+                        status_code=429,
+                        content={
+                            "error": "too many requests",
+                            "code": "RATE_LIMITED",
+                        },
+                        headers={
+                            "Retry-After": str(decision.retry_after or 1)
+                        },
+                    )
 
-        response = await call_next(request)
-        if decision is not None:
-            response.headers["X-RateLimit-Limit"] = str(decision.limit)
-            response.headers["X-RateLimit-Remaining"] = str(
-                decision.remaining
+            response = await call_next(request)
+            if decision is not None:
+                response.headers["X-RateLimit-Limit"] = str(decision.limit)
+                response.headers["X-RateLimit-Remaining"] = str(
+                    decision.remaining
+                )
+            response.headers["X-Request-ID"] = ctx.request_id
+            observe_http(
+                request.method, _route_label(request),
+                response.status_code, perf_counter() - started,
             )
-        response.headers["X-Request-ID"] = ctx.request_id
-        return response
+            return response
+        finally:
+            clear_request_context()
 
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError):
@@ -114,6 +158,13 @@ def create_app(container: Container) -> FastAPI:
         return JSONResponse(
             status_code=200 if result["status"] == "ok" else 503,
             content=result,
+        )
+
+    @app.get("/metrics")
+    async def metrics():
+        """Prometheus 抓取入口；不需要业务鉴权。"""
+        return Response(
+            content=generate_latest(), media_type=CONTENT_TYPE_LATEST
         )
 
     @app.get("/")

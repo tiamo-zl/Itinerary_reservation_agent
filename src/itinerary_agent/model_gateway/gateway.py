@@ -25,6 +25,14 @@ from itinerary_agent.model_gateway.router import (
     resolve_fallback_model,
     resolve_model,
 )
+from itinerary_agent.observability.metrics import (
+    LLM_CACHE_HITS,
+    LLM_CACHE_MISSES,
+    MODEL_CALLS,
+    MODEL_COST,
+    MODEL_ERRORS,
+    MODEL_TOKENS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +123,7 @@ class OpenAIChatGateway:
         if cacheable and self.cache is not None:
             cached = await self.cache.get(cache_key)
             if cached:
+                LLM_CACHE_HITS.inc()
                 # 命中缓存不产生新的模型费用；token 数保留便于统计。
                 completion = Completion.model_validate_json(cached).model_copy(
                     update={"cost_usd": 0.0}
@@ -126,6 +135,7 @@ class OpenAIChatGateway:
                     status="ok", cache_hit=True, attempt=0,
                 )
                 return completion
+            LLM_CACHE_MISSES.inc()
 
         # 步骤 4/5：主备切换；每个候选内部最多一次修复。
         last_error: Exception | None = None
@@ -164,6 +174,13 @@ class OpenAIChatGateway:
                     "model call failed provider=%s model=%s code=%s: %s",
                     provider, model, error_code, exc,
                 )
+                MODEL_CALLS.labels(
+                    provider=provider, status="error",
+                    fallback=str(bool(fallback_from)),
+                ).inc()
+                MODEL_ERRORS.labels(
+                    provider=provider, code=error_code
+                ).inc()
                 last_error = exc
                 if provider == self.settings.primary_provider_name:
                     fallback_from = model
@@ -179,6 +196,17 @@ class OpenAIChatGateway:
                 "provider": provider,
                 "fallback_from": fallback_from,
             })
+            MODEL_CALLS.labels(
+                provider=provider, status="ok",
+                fallback=str(bool(fallback_from)),
+            ).inc()
+            MODEL_TOKENS.labels(provider=provider, kind="prompt").inc(
+                result.prompt_tokens
+            )
+            MODEL_TOKENS.labels(
+                provider=provider, kind="completion"
+            ).inc(result.completion_tokens)
+            MODEL_COST.labels(provider=provider).inc(cost)
             await self._record(
                 ctx, provider, model, result.prompt_tokens,
                 result.completion_tokens, cost, duration_ms,

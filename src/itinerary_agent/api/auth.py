@@ -19,7 +19,7 @@ from itinerary_agent.domain.models import RequestContext
 from itinerary_agent.infra.config import Settings
 
 PUBLIC_PATHS = {
-    "/", "/health", "/healthz", "/readyz", "/docs",
+    "/", "/health", "/healthz", "/readyz", "/metrics", "/docs",
     "/openapi.json", "/redoc", "/favicon.ico",
 }
 

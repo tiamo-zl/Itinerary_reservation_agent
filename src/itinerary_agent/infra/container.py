@@ -385,4 +385,8 @@ def build_container(settings: Settings | None = None) -> Container:
         min_size=settings.database_pool_min,
         max_size=settings.database_pool_max,
     )
-    return Container(settings=settings, db=db, traces=TraceRecorder(db))
+    return Container(
+        settings=settings,
+        db=db,
+        traces=TraceRecorder(db, otel_enabled=settings.otel_enabled),
+    )

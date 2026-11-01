@@ -6,21 +6,37 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from itinerary_agent.infra.container import Container, build_container
+from itinerary_agent.observability.logging import configure_logging
+from itinerary_agent.observability.telemetry import (
+    setup_telemetry,
+    shutdown_telemetry,
+)
 
 
 def create_worker_app(container: Container) -> FastAPI:
+    configure_logging(container.settings)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await container.start(role="worker")
         yield
         await container.stop()
+        shutdown_telemetry()
 
     app = FastAPI(title="Itinerary Agent Worker", lifespan=lifespan)
     app.state.container = container
+    setup_telemetry(container.settings, app)
+
+    @app.get("/metrics")
+    async def metrics():
+        return Response(
+            content=generate_latest(), media_type=CONTENT_TYPE_LATEST
+        )
 
     @app.get("/healthz")
     async def healthz():

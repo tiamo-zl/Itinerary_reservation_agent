@@ -16,6 +16,7 @@ from itinerary_agent.api.context import build_context
 from itinerary_agent.api.pii import scrub
 from itinerary_agent.api.sse import to_sse
 from itinerary_agent.domain.models import Decision
+from itinerary_agent.observability.metrics import SSE_CONNECTIONS
 
 
 class ChatRequest(BaseModel):
@@ -67,13 +68,17 @@ def build_router(container) -> APIRouter:
         container.traces.start_trace(ctx.trace_id)
 
         async def events():
-            async with container.traces.span(
-                "gateway.http", "gateway", route="/chat"
-            ):
-                async for event in container.orchestrator.start_turn(
-                    ctx, scrub(payload.message)
+            SSE_CONNECTIONS.inc()
+            try:
+                async with container.traces.span(
+                    "gateway.http", "gateway", route="/chat"
                 ):
-                    yield to_sse(event)
+                    async for event in container.orchestrator.start_turn(
+                        ctx, scrub(payload.message)
+                    ):
+                        yield to_sse(event)
+            finally:
+                SSE_CONNECTIONS.dec()
 
         return EventSourceResponse(events())
 
@@ -88,13 +93,17 @@ def build_router(container) -> APIRouter:
         container.traces.start_trace(ctx.trace_id)
 
         async def events():
-            async with container.traces.span(
-                "gateway.http", "gateway", route="/tasks/resume"
-            ):
-                async for event in container.orchestrator.resume(
-                    ctx, task_id, decision
+            SSE_CONNECTIONS.inc()
+            try:
+                async with container.traces.span(
+                    "gateway.http", "gateway", route="/tasks/resume"
                 ):
-                    yield to_sse(event)
+                    async for event in container.orchestrator.resume(
+                        ctx, task_id, decision
+                    ):
+                        yield to_sse(event)
+            finally:
+                SSE_CONNECTIONS.dec()
 
         return EventSourceResponse(events())
 

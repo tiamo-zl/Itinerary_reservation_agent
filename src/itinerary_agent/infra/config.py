@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     database_pool_max: int = 10
     redis_url: str = "redis://127.0.0.1:56379/0"
 
+    # 可观测：P0 默认关闭 OTel 导出，避免离线启动依赖 Collector。
+    otel_enabled: bool = False
+    otel_service_name: str = "itinerary-agent"
+    otel_service_version: str = "0.1.0"
+    otel_exporter_otlp_endpoint: str | None = None
+    otel_trace_sampling_ratio: float = 1.0
+    log_level: str = "INFO"
+
     # 鉴权：mock 仅允许 local/test；生产必须 jwt/oidc。
     auth_mode: Literal["mock", "jwt", "oidc"] = "mock"
     jwt_secret: str | None = None

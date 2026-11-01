@@ -15,6 +15,7 @@ from itinerary_agent.application.ports import (
     TaskRepositoryPort,
 )
 from itinerary_agent.domain.models import ApprovalStatus, Decision, RequestContext
+from itinerary_agent.observability.metrics import OUTBOX_EVENTS
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ class OutboxRelay:
                 try:
                     await self._handle(event)
                     await self.outbox.mark_done(event["id"])
+                    OUTBOX_EVENTS.labels(status="done").inc()
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -65,6 +67,7 @@ class OutboxRelay:
                     await self.outbox.mark_failed(
                         event["id"], str(exc), self.max_attempts
                     )
+                    OUTBOX_EVENTS.labels(status="failed").inc()
             if not events:
                 await asyncio.sleep(self.interval)
 

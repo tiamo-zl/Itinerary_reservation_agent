@@ -1,18 +1,22 @@
-"""轻量 Trace 实现。
+"""Trace 记录器。
 
-数据模型与 OpenTelemetry 对齐（trace_id / span_id / parent_span_id），
-但不引入 OTel SDK：本地 demo 只需要能把一次请求的调用树写进 SQLite。
+数据模型与 OpenTelemetry 对齐（trace_id / span_id / parent_span_id）。
+OTel 开启时同时创建 OTel span；无论是否开启，都异步/同步落库到
+PostgreSQL 的 spans 投影，供自建控制台查询。写入失败绝不影响业务。
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from time import perf_counter
 from uuid import uuid4
+
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from itinerary_agent.infra.db import Database
 
@@ -25,17 +29,26 @@ _current_span: ContextVar[str | None] = ContextVar("current_span", default=None)
 _current_task: ContextVar[str | None] = ContextVar("current_task", default=None)
 
 
+def _otel_attributes(attributes: dict) -> dict:
+    """OTel 只接受原始类型；嵌套结构转成字符串。"""
+    result = {}
+    for key, value in attributes.items():
+        if value is None:
+            continue
+        result[key] = value if isinstance(
+            value, (str, int, float, bool)
+        ) else str(value)
+    return result
+
+
 class TraceRecorder:
-    """写入 SQLite 的 trace 记录器。
+    """一次用户请求 = 一个 trace；每个层/节点操作 = 一个 span。"""
 
-    约定：
-    - 一次用户请求 = 一个 trace；
-    - 每个层/节点的关键操作 = 一个 span；
-    - 写入失败只记日志，绝不影响业务。
-    """
-
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, otel_enabled: bool = False):
         self.db = db
+        self._tracer = (
+            trace.get_tracer("itinerary_agent") if otel_enabled else None
+        )
 
     def start_trace(self, trace_id: str | None = None) -> str:
         """开始或沿用一次 trace；沿用时不打断当前 span 父子关系。"""
@@ -73,12 +86,29 @@ class TraceRecorder:
         started = perf_counter()
         token = _current_span.set(span_id)
         status = "ok"
+        span_cm = (
+            self._tracer.start_as_current_span(
+                name, attributes=_otel_attributes(attributes)
+            )
+            if self._tracer is not None
+            else nullcontext()
+        )
         try:
-            yield span_id
-        except Exception as exc:
-            status = "error"
-            attributes["error"] = str(exc)
-            raise
+            with span_cm as otel_span:
+                try:
+                    yield span_id
+                except Exception as exc:
+                    status = "error"
+                    attributes["error"] = str(exc)
+                    if otel_span is not None:
+                        otel_span.record_exception(exc)
+                        otel_span.set_status(
+                            Status(StatusCode.ERROR, str(exc))
+                        )
+                    raise
+                else:
+                    if otel_span is not None:
+                        otel_span.set_status(Status(StatusCode.OK))
         finally:
             _current_span.reset(token)
             duration_ms = (perf_counter() - started) * 1000
@@ -93,7 +123,8 @@ class TraceRecorder:
         try:
             await self.db.execute(
                 "INSERT INTO spans (span_id, trace_id, parent_span_id, name, layer, "
-                "status, start_time, duration_ms, attributes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "status, start_time, duration_ms, attributes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     span_id, trace_id, parent_id, name, layer, status,
                     started_at.isoformat(), duration_ms,
@@ -102,3 +133,15 @@ class TraceRecorder:
             )
         except Exception:
             logger.exception("failed to persist span %s", name)
+
+
+def current_trace_id() -> str | None:
+    return _current_trace.get()
+
+
+def current_span_id() -> str | None:
+    return _current_span.get()
+
+
+def current_task_id() -> str | None:
+    return _current_task.get()
