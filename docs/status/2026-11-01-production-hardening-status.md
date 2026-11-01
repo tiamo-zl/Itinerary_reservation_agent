@@ -1,10 +1,36 @@
 # 生产化改造进度（2026-11-01）
 
 - 分支：`feat/observability-console`
+- 最新提交：`bf06c79 feat: complete the P1 gateway, mock, eval and model stack`
 - 测试：**131 passed**，覆盖率 **85.5%**
 - 评测：`make eval` 全部通过（66 条金标/回放用例）
 - 类型检查：`make typecheck` 覆盖 application/eval/security/tools/workers/repositories
 - 默认运行模式：`MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`
+
+## 当前快照（2026-11-01 22:37 CST）
+
+- 工作树：只剩用户本地文件未提交
+  - `src/itinerary_agent/api/static/chat.html`
+  - `web/vite.config.ts`
+  - `docs/reviews/`
+- 当前运行的 API/worker：`ADAPTER_MODE=http`、`MODEL_MODE=scripted`、`AUTH_MODE=mock`
+- 当前运行镜像早于最新模型网关改动；重建因 Docker 内 `uv sync` 下载依赖长时间停住而中止。
+  最新代码已通过测试，重新构建命令：
+
+  ```bash
+  ADAPTER_MODE=http MOCK_DEPS_URL=http://mock-deps:9003 \
+    docker compose --profile core --profile mocks up -d --build api worker mock-deps
+  ```
+
+- 演示数据：
+  - `p0-manual`：task `85bf6eefa5704e7b8bb886bb0ec3d17e`，trace `p0-manual-trace`，
+    approval `a6dbf800114c44a7a58d374954694bcd`，状态 `WAITING_APPROVAL`
+  - `p0-verify`：已走完审批 → 恢复 → 选择 → `COMPLETED`
+- 观测：
+  - Prometheus 7 个 target `up`
+  - 8 条告警规则已加载
+  - Grafana `Itinerary Agent` 看板已 provision
+  - SkyWalking 服务目录仍为空（原始 span 在 ES）
 
 ## 总体进度
 
