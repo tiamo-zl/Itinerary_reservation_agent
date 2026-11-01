@@ -56,6 +56,7 @@ jobs:
           uv run mypy
           src/itinerary_agent/application
           src/itinerary_agent/eval
+          src/itinerary_agent/knowledge
           src/itinerary_agent/security
           src/itinerary_agent/tools
           src/itinerary_agent/workers

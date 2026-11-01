@@ -51,6 +51,9 @@ async def ingest_bundle(bundle: PolicyBundle, policy_store, clause_store,
         await policy_store.upsert_table(table)
 
     # 步骤 5：条款级 embedding；文本带路径和标题，帮助区分同名条款。
+    # --skip-vectors 时只写结构化数据，不依赖 Milvus/embedding。
+    if clause_store is None or embedder is None:
+        return len(bundle.clauses)
     texts = [f"{clause.path} {clause.title} {clause.text}" for clause in bundle.clauses]
     call_ctx = CallContext(
         trace_id="ingest", tenant_id=bundle.tenant_id, purpose="embed"

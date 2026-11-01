@@ -56,6 +56,7 @@ Web；详见 `docs/runbooks/higress.md`。
 ```bash
 make test                     # 需要 TEST_DATABASE_URL
 make eval                     # 金标集 + 阈值，失败返回非零
+make knowledge-check          # 制度条款/引用/表格一致性检查
 make lint
 make typecheck
 ```
@@ -92,7 +93,8 @@ HTTP 模式覆盖用户、库存、审批、下单；超时/重试/trace 透传�
 
 设计取舍见 `docs/adr/`，运维步骤见 `docs/runbooks/`。
 人工验收与观测观察方法见 `docs/runbooks/p0-acceptance.md`，
-模型流式/熔断/prompt 版本见 `docs/runbooks/model-gateway.md`。
+模型流式/熔断/prompt 版本见 `docs/runbooks/model-gateway.md`，
+制度入库/重建/检查见 `docs/runbooks/knowledge.md`。
 
 ## 五件套可观测
 
@@ -120,6 +122,7 @@ Prometheus 抓取 API/worker/Collector 指标；Grafana 自动加载看板。
 - 工具注册、参数校验、mock 用户/库存/审批/下单、幂等写操作
 - 差标规则编译与确定性求值、动作准入、审计
 - 制度条款树/引用图/表格、pg_trgm + Milvus 混合检索、context pack
+- 知识入库/重建/一致性检查 CLI：`knowledge-ingest`、`knowledge-reindex`、`knowledge-check`
 - revision 修改、审批驳回/通过、取消/暂停
 - Trace/span 全链路记录与树形回放
 - 模型主备切换、Redis 共享熔断、真流式、prompt 版本注册表、任务预算、结构化输出校验/修复、成本账本

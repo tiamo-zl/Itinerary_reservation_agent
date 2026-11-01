@@ -53,10 +53,15 @@ class PostgresPolicyStore:
 
     async def add_review(self, clause_id: str, ref_text: str, reason: str) -> None:
         # 无法解析的引用进入人工校对队列，不能静默丢弃。
+        # 重复入库同一 bundle 时避免产生重复待办。
         await self.db.execute(
-            "INSERT INTO policy_ingest_reviews (clause_id, ref_text, reason, created_at) "
-            "VALUES (?, ?, ?, now())",
-            (clause_id, ref_text, reason),
+            "INSERT INTO policy_ingest_reviews "
+            "(clause_id, ref_text, reason, created_at) "
+            "SELECT ?, ?, ?, now() WHERE NOT EXISTS ("
+            "  SELECT 1 FROM policy_ingest_reviews "
+            "  WHERE clause_id = ? AND ref_text = ? AND status = 'pending'"
+            ")",
+            (clause_id, ref_text, reason, clause_id, ref_text),
         )
 
     async def upsert_table(self, table: PolicyTable) -> None:
@@ -108,6 +113,56 @@ class PostgresPolicyStore:
             (tenant_id, policy_version, query, query, query, query, limit),
         )
         return [dict(row) for row in rows]
+
+    async def list_clauses(self, tenant_id: str,
+                           policy_version: str) -> list[dict]:
+        rows = await self.db.fetchall(
+            "SELECT * FROM policy_clauses WHERE tenant_id = ? "
+            "AND policy_version = ? ORDER BY path, order_no",
+            (tenant_id, policy_version),
+        )
+        return [dict(row) for row in rows]
+
+    async def list_edges(self, tenant_id: str,
+                         policy_version: str) -> list[dict]:
+        rows = await self.db.fetchall(
+            "SELECT e.source_id, e.relation, e.target_id FROM policy_edges e "
+            "JOIN policy_clauses c ON c.clause_id = e.source_id "
+            "WHERE c.tenant_id = ? AND c.policy_version = ?",
+            (tenant_id, policy_version),
+        )
+        return [dict(row) for row in rows]
+
+    async def list_references(self, tenant_id: str,
+                              policy_version: str) -> dict[str, list[str]]:
+        rows = await self.db.fetchall(
+            "SELECT e.source_id, e.target_id FROM policy_edges e "
+            "JOIN policy_clauses c ON c.clause_id = e.source_id "
+            "WHERE c.tenant_id = ? AND c.policy_version = ? "
+            "AND e.relation = 'references'",
+            (tenant_id, policy_version),
+        )
+        result: dict[str, list[str]] = {}
+        for row in rows:
+            result.setdefault(row["source_id"], []).append(row["target_id"])
+        return result
+
+    async def list_pending_reviews(self) -> list[dict]:
+        rows = await self.db.fetchall(
+            "SELECT review_id, clause_id, ref_text, reason, created_at "
+            "FROM policy_ingest_reviews WHERE status = 'pending' "
+            "ORDER BY review_id"
+        )
+        return [dict(row) for row in rows]
+
+    async def reindex_keyword_indexes(self) -> None:
+        """重建 pg_trgm 索引；只由知识 CLI 调用。"""
+        await self.db.execute(
+            "REINDEX INDEX idx_policy_clauses_title_trgm"
+        )
+        await self.db.execute(
+            "REINDEX INDEX idx_policy_clauses_text_trgm"
+        )
 
     async def expand(self, seed_ids: list[str], hops: int = 1) -> list[dict]:
         """沿引用/例外/父子边扩展条款，返回带 refs 的节点集合。

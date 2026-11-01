@@ -48,6 +48,12 @@ class MilvusClauseStore:
         )
         self.client.create_collection(name, schema=schema, index_params=index)
 
+    def reset(self) -> None:
+        """重建 collection；用于全量 reindex。"""
+        if self.client.has_collection(self.settings.milvus_collection):
+            self.client.drop_collection(self.settings.milvus_collection)
+        self.ensure_collection()
+
     def upsert(self, rows: list[dict]) -> None:
         # 以 clause_id 为主键幂等写入；重复入库不会产生重复向量。
         self.client.upsert(collection_name=self.settings.milvus_collection, data=rows)

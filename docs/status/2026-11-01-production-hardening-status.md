@@ -2,9 +2,9 @@
 
 - 分支：`feat/observability-console`
 - 最新提交：`bf06c79 feat: complete the P1 gateway, mock, eval and model stack`
-- 测试：**131 passed**，覆盖率 **85.5%**
+- 测试：**134 passed**，覆盖率 **83.8%**
 - 评测：`make eval` 全部通过（66 条金标/回放用例）
-- 类型检查：`make typecheck` 覆盖 application/eval/security/tools/workers/repositories
+- 类型检查：`make typecheck` 覆盖 application/eval/knowledge/security/tools/workers/repositories
 - 默认运行模式：`MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`
 
 ## 当前快照（2026-11-01 22:37 CST）
@@ -37,7 +37,7 @@
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | P0 生产基线 | ✅ 100% | PostgreSQL、worker/outbox、鉴权、API 加固、工具治理、保留清理、可观测与 CI 收尾完成 |
-| P1 韧性与深度 | 约 60% | 五件套、Higress、HTTP mock、评测、模型网关深度已完成；知识 CLI、前端、压测/混沌/安全未开始 |
+| P1 韧性与深度 | 约 75% | 五件套、Higress、HTTP mock、评测、模型网关、知识 CLI 已完成；前端加固按决定不做；压测/混沌/安全未开始 |
 | P2 规模化运维 | 0% | 未开始 |
 
 ## P0 明细
@@ -52,7 +52,7 @@
 | W5 模型网关 | ✅ 100% | fallback、结构化校验/修复、成本账本、缓存、超时；P1 已补真流式、共享熔断、prompt 注册表、任务预算 | — |
 | W6 工具治理 | ✅ 100% | 输入/输出 schema、超时、required_scopes、错误分类、工具指标、guard/审批/下单/幂等回放审计 | — |
 | W7 可观测 | ✅ 100% | OTel、JSON 日志、Prometheus 指标、Postgres trace 投影、五件套、告警规则接入共享 Prometheus | SkyWalking 服务目录为空属外部栈限制，见下 |
-| W8 测试/CI/文档 | ✅ 100% | 131 tests、85.5% 覆盖率、PG 测试库、ruff、mypy（新模块）、CI、ADR、Runbook | CI 尚未在 GitHub 实际运行 |
+| W8 测试/CI/文档 | ✅ 100% | 134 tests、83.8% 覆盖率、PG 测试库、ruff、mypy（新模块）、CI、ADR、Runbook | CI 尚未在 GitHub 实际运行 |
 
 ## 本轮（P0 收尾）完成项
 
@@ -90,9 +90,18 @@
 | HTTP mock 服务 + 真实适配器 | ✅ 完成：users/inventory/approval/booking；超时/重试/trace 透传/幂等回放契约测试 |
 | 评测金标集 | ✅ 完成：slot/policy/retrieval/approval/prompt/badcase 六类；阈值进 CI |
 | 模型网关深度 | ✅ 完成：真流式、Redis 共享熔断、prompt 版本注册表、任务预算、fallback/校验/成本 |
-| 知识入库 CLI / 重建 | ❌ 未开始 |
-| 前端鉴权/错误边界/SSE 重连/测试 | ❌ 未开始 |
+| 知识入库 CLI / 重建 | ✅ 完成：ingest/reindex/check；结构化入库、pg_trgm 重建、Milvus 重建、一致性审计 |
+| 前端鉴权/错误边界/SSE 重连/测试 | ⏭ 按决定不做 |
 | 压测/混沌/安全 | ❌ 未开始 |
+
+### 范围决定：前端加固不纳入当前 P1
+
+- 决定日期：2026-11-01
+- 现有 Vue 控制台继续可用，不新增登录/路由守卫、全局错误边界、
+  SSE 自动重连、Vitest/Playwright 测试。
+- `web/` 下的测试依赖已安装，但本轮不接入 CI；如后续恢复前端加固，
+  注意 Playwright 1.64.1 不支持 macOS 13 内置 Chromium，本地需使用
+  系统 Chrome（`channel: "chrome"`），CI 使用 Linux + 自带 Chromium。
 
 ## 当前运行
 
@@ -128,7 +137,7 @@
 ## 已知限制
 
 1. **SkyWalking 服务目录为空**：`sw_zipkin_span-*` 已有约 9.8k 文档，但 `sw_segment-*` 为 0，`getAllServices` 返回空。SkyWalking 11 的 OTLP/Zipkin trace 入库没有生成 segment；原始 span 可在 Elasticsearch/Kibana 中查询。已在 Runbook 记录，属于外部栈限制，不影响业务 Trace（Postgres 投影 + Langfuse 可用）。
-2. **mypy 渐进覆盖**：application/security/tools/workers/repositories 通过；orchestration/infra 容器等旧模块尚未纳入严格检查，`make typecheck` 与 CI 使用同一范围。
+2. **mypy 渐进覆盖**：application/eval/knowledge/security/tools/workers/repositories 通过；orchestration/infra 容器等旧模块尚未纳入严格检查，`make typecheck` 与 CI 使用同一范围。
 3. Langfuse 与业务各有一套 Postgres/Redis，这是有意的故障域隔离，不建议合并。
 4. `mock-idp` 仅 JWT 调试需要，可随时停止。
 
@@ -158,8 +167,8 @@ cd web && npm run build
 本轮结果：
 
 - `ruff check src tests`：通过
-- `mypy`（CI 范围，含 eval）：通过
-- `pytest`：131 passed，85.5% 覆盖率
+- `mypy`（CI 范围，含 eval/knowledge）：通过
+- `pytest`：134 passed，83.8% 覆盖率
 - `make eval`：全部 suite 通过
 - Prometheus：8 条告警规则已加载
 
@@ -190,9 +199,16 @@ cd web && npm run build
 - 新增指标与 `ItineraryModelCircuitOpen` 告警
 - Runbook：`docs/runbooks/model-gateway.md`
 
+## 知识 CLI（P1）
+
+- `knowledge-ingest`：结构化制度 JSON → PostgreSQL 条款/边/表格，可选 Milvus
+- `knowledge-reindex`：重建 pg_trgm 索引 + 重新生成 Milvus 向量
+- `knowledge-check`：父节点、引用/例外边、表格、重复 path、待校对引用
+- 无 Milvus 时使用 `--skip-vectors`；无 DashScope Key 时使用确定性 hash embedding
+- Runbook：`docs/runbooks/knowledge.md`
+- 已用 demo fixture 实测 ingest/check/reindex 通过
+
 ## 建议下一步（P1）
 
-1. 知识入库 CLI / 重建 / 校验。
-2. 前端 JWT、错误边界、SSE 重连、Vitest/Playwright。
-3. 压测 / 混沌 / 安全测试（可直接复用 `X-Mock-Fault`）。
-4. 视需要修复或替换 SkyWalking 服务目录查询。
+1. 压测 / 混沌 / 安全测试（可直接复用 `X-Mock-Fault`）。
+2. 视需要修复或替换 SkyWalking 服务目录查询。
