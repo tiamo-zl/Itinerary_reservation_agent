@@ -1,0 +1,16 @@
+# 示例价格（USD / 1M tokens），部署前按实际合同更新。
+providers:
+  deepseek:
+    deepseek-chat:
+      input_per_1m: 0.27
+      output_per_1m: 1.10
+    deepseek-reasoner:
+      input_per_1m: 0.55
+      output_per_1m: 2.19
+  dashscope:
+    qwen-plus:
+      input_per_1m: 0.40
+      output_per_1m: 1.20
+    qwen-max:
+      input_per_1m: 1.60
+      output_per_1m: 6.40

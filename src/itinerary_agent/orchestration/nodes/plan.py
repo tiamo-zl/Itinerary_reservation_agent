@@ -35,20 +35,28 @@ async def plan(state: dict, deps) -> dict:
         trace_id=state["trace_id"], tenant_id=state["tenant_id"],
         task_id=state["task_id"], purpose="plan",
     )
-    async with deps.span(
-        "orchestration.node.plan", "orchestration",
-        trace_id=state["trace_id"],
-    ):
-        messages = [
-            {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": json.dumps(state["request"], ensure_ascii=False)},
-        ]
-        completion = await deps.model.complete(ctx, messages, deps.tier_reasoning)
+    completion = None
+    try:
+        async with deps.span(
+            "orchestration.node.plan", "orchestration",
+            trace_id=state["trace_id"],
+        ):
+            messages = [
+                {"role": "system", "content": SYSTEM},
+                {"role": "user", "content": json.dumps(
+                    state["request"], ensure_ascii=False
+                )},
+            ]
+            completion = await deps.model.complete(
+                ctx, messages, deps.tier_reasoning
+            )
+    except Exception:  # noqa: BLE001 - 模型不可用时使用默认步骤
+        completion = None
 
     # 步骤 3：模型输出只用于“建议步骤”，不是执行依据；
     # 解析失败时退化为默认查询步骤，后续 search/policy 仍按确定性代码执行。
     try:
-        text = completion.text.strip()
+        text = completion.text.strip() if completion is not None else ""
         start, end = text.find("{"), text.rfind("}")
         steps = json.loads(text[start:end + 1]).get("steps", [])
     except Exception:  # noqa: BLE001 - 模型输出不可信，解析失败需降级

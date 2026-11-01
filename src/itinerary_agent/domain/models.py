@@ -309,6 +309,8 @@ class Completion(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cost_usd: float = 0.0
+    provider: str | None = None
+    fallback_from: str | None = None
 
 
 class Event(BaseModel):

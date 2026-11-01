@@ -154,18 +154,26 @@ async def understand(state: dict, deps) -> dict:
         task_id=state["task_id"], purpose="understand",
     )
     system = SYSTEM_TEMPLATE.format(today=date.today().isoformat())
-    async with deps.span(
-        "orchestration.node.understand", "orchestration",
-        trace_id=state["trace_id"],
-    ):
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": state["request"].get("raw_message", "")},
-        ]
-        completion = await deps.model.complete(
-            ctx, messages, deps.tier_light,
-            response_schema=TripRequest.model_json_schema(),
+    try:
+        async with deps.span(
+            "orchestration.node.understand", "orchestration",
+            trace_id=state["trace_id"],
+        ):
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": state["request"].get("raw_message", "")},
+            ]
+            completion = await deps.model.complete(
+                ctx, messages, deps.tier_light,
+                response_schema=TripRequest.model_json_schema(),
+            )
+    except Exception:  # noqa: BLE001 - 模型不可用时转人工补充
+        human = HumanRequest(
+            type=HumanRequestType.CLARIFY,
+            message="模型服务暂时不可用，请稍后重试。",
         )
+        return {"status": "WAITING_HUMAN",
+                "pending_human": human.model_dump(mode="json")}
 
     # 步骤 2/3：解析并归一化；失败转追问。
     try:

@@ -44,6 +44,22 @@ class Settings(BaseSettings):
     model_light: str = "deepseek-chat"
     model_standard: str = "deepseek-chat"
     model_reasoning: str = "deepseek-reasoner"
+    model_timeout_seconds: float = 30.0
+    model_max_retries: int = 2
+    primary_provider_name: str = "deepseek"
+
+    # 备用提供方：主模型失败时切换；默认复用 DashScope 的兼容接口。
+    model_fallback_enabled: bool = True
+    fallback_provider_name: str = "dashscope"
+    fallback_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    fallback_api_key: str | None = None
+    fallback_model_light: str = "qwen-plus"
+    fallback_model_standard: str = "qwen-plus"
+    fallback_model_reasoning: str = "qwen-plus"
+
+    # 模型缓存与价格表。
+    llm_cache_ttl_seconds: int = 86400
+    model_pricing_file: str = "config/pricing.yaml"
 
     # Embedding：阿里云百炼的 OpenAI 兼容接口。
     # 维度在建 Milvus collection 时确定，后续不能混用不同维度。

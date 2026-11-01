@@ -10,14 +10,20 @@ async def respond(state: dict, deps) -> dict:
         trace_id=state["trace_id"], tenant_id=state["tenant_id"],
         task_id=state["task_id"], purpose="summarize",
     )
-    async with deps.span(
-        "orchestration.node.respond", "orchestration",
-        trace_id=state["trace_id"],
-    ):
-        messages = [
-            {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": str(state.get("request"))},
-        ]
-        completion = await deps.model.complete(ctx, messages, deps.tier_standard)
+    try:
+        async with deps.span(
+            "orchestration.node.respond", "orchestration",
+            trace_id=state["trace_id"],
+        ):
+            messages = [
+                {"role": "system", "content": SYSTEM},
+                {"role": "user", "content": str(state.get("request"))},
+            ]
+            completion = await deps.model.complete(
+                ctx, messages, deps.tier_standard
+            )
+        summary = completion.text
+    except Exception:  # noqa: BLE001 - 总结失败不阻断已完成的下单
+        summary = "差旅方案已处理完成。"
 
-    return {"status": "COMPLETED", "summary": completion.text}
+    return {"status": "COMPLETED", "summary": summary}
