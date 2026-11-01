@@ -10,9 +10,11 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## 项目现状
 
-差旅预订 Agent 的生产级形态学习 demo，本地运行、外部系统全部 mock。
+差旅预订 Agent 的生产级形态学习 demo，外部业务系统 mock，运行形态按生产标准实现。
 
 - **M0–M5 已完成**：七层骨架、编排、工具、制度检索、差标/审批/下单、Trace 和 12 个场景。
+- **P0 生产化基线已完成**：PostgreSQL + Alembic、API/worker 分离、outbox + lease、
+  JWT/OIDC、Redis 限流与缓存、模型主备切换、结构化日志/指标/OTel 接入点、Compose 与 CI。
 - **观测控制台**：`web/`（Vue 3 + Vite）聊天、对话记录、审批工作台、流转图、trace 回放、线上概览；`tests/eval/` 评测集。
 - 默认 scripted + mock，完全离线可运行。
 - live 模式已用真实 DeepSeek / DashScope / 本地 Milvus 完成主链路、审批和修改需求联调。
@@ -21,12 +23,16 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ```bash
 uv sync --dev
-uv run pytest -q
-uv run pytest tests/test_db.py::test_init_and_insert_task -v
-uv run ruff check src tests
-uv run uvicorn --app-dir src itinerary_agent.main:app --reload
+make db-up                # PostgreSQL 55432 / Redis 56379
+make migrate
+make api                  # 8000
+make worker               # 8001
+make test                 # 需要 TEST_DATABASE_URL
+make lint
+make typecheck
 cd web && npm install
-cd web && npm run dev
+cd web && npm run dev     # 5211
+docker compose --profile core up -d --build   # Web 8080
 ```
 
 依赖与中间件由用户安装；不要自行执行 `uv add`、`uv sync` 或下载组件。
@@ -34,14 +40,18 @@ cd web && npm run dev
 ## 关键约束
 
 - 七层逻辑分包，依赖单向；具体实现只在 `infra` 装配。
+- SQL 只允许出现在 `infra/repositories/`；`tests/test_import_boundaries.py` 会检查。
 - 模型/embedding 只走 `model_gateway`；外部业务系统只走 `tools`。
 - 编排状态只放摘要与引用 ID；制度原文和聊天全文不进状态。
 - 差标由 `control` 规则确定性判定；RAG 只解释与引用。
 - 制度检索使用条款树 + 引用/例外图 + 结构化表格，不做章节切分。
+- API 进程无状态；审批恢复、outbox、保留清理由 worker 负责。
+- 生产环境禁止 `AUTH_MODE=mock`。
 
 ## 环境注意
 
 - `pymupdf<2.0`：2.0 会经 `pymupdf-layout` 引入 `onnxruntime`，Intel macOS 无可用 wheel。
 - `pymilvus<3.0`：保持 2.x `MilvusClient` API。
 - Milvus 地址：`127.0.0.1:19530`。
-- 测试默认临时 SQLite + 脚本化模型，不访问真实网络。
+- 测试使用 PostgreSQL 测试库和脚本化模型，不访问真实网络；checkpoint 表由 LangGraph 管理，不要用 Alembic 手改。
+- 本地 Compose 端口：Postgres 55432、Redis 56379，避开已有 Langfuse 栈。

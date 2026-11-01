@@ -24,37 +24,65 @@
 
 ## 本地运行
 
+依赖与中间件由使用者安装。推荐用 Compose 启动 PostgreSQL、Redis、API、worker 和 Web：
+
 ```bash
-uv sync --dev
-cp .env.example .env   # scripted 模式可以先不填 Key
-uv run uvicorn --app-dir src itinerary_agent.main:app --reload
+cp .env.example .env          # scripted 模式可以先不填 Key
+make db-up                    # PostgreSQL 55432 / Redis 56379
+make migrate                  # Alembic upgrade head
+make api                      # http://127.0.0.1:8000
+make worker                   # http://127.0.0.1:8001
 ```
 
-打开 http://127.0.0.1:8000/ 使用最小聊天页；任务、trace 和审批接口：
+或者一次启动核心栈：
 
-- `GET /tasks/{task_id}`
-- `GET /traces/{trace_id}` / `GET /traces/{trace_id}/view`
-- `POST /admin/approvals/{approval_id}/approve|reject`
+```bash
+docker compose --profile core up -d --build
+```
+
+- Web（Nginx + Vue 构建）：http://127.0.0.1:8080
+- API：http://127.0.0.1:8000
+- Worker：http://127.0.0.1:8001
+- 就绪检查：`GET /readyz`；指标：`GET /metrics`
 
 测试与检查：
 
 ```bash
-uv run pytest -q
-uv run ruff check src tests
+make test                     # 需要 TEST_DATABASE_URL
+make lint
+make typecheck
 ```
 
-默认 `MODEL_MODE=scripted`、`ADAPTER_MODE=mock`，不访问真实模型或外部业务系统。
+默认 `MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`，不访问真实模型或外部业务系统。
 切换 live 模式需要配置 DeepSeek / DashScope Key，并启动本地 Milvus（`127.0.0.1:19530`）。
+生产环境禁止 mock 鉴权，必须配置 JWT 或 OIDC。
+
+## 生产化基线（P0）
+
+- PostgreSQL 业务库 + Alembic 迁移 + Postgres Checkpoint
+- API / worker 分离；审批通过 outbox + lease 驱动
+- 任务恢复租约，避免用户和 worker 并发恢复
+- JWT / OIDC 鉴权，本地 mock IdP 仅用于开发
+- Redis 限流与 LLM 缓存
+- 模型主备切换、结构化输出校验/修复、成本账本
+- JSON 日志、Prometheus 指标、OTel 接入点
+- Dockerfile、Compose core、GitHub Actions CI
+
+设计取舍见 `docs/adr/`，运维步骤见 `docs/runbooks/`。
 
 ## 已实现
 
-- 七层分包、依赖单向检查
-- LangGraph 编排、SQLite Checkpoint、人在回路确认/恢复
+- 七层分包、应用服务/仓储分层、依赖与 SQL 边界检查
+- LangGraph 编排、Postgres Checkpoint、人在回路确认/恢复
+- API / worker 分离，outbox 事件驱动审批恢复，任务级 lease
 - 工具注册、参数校验、mock 用户/库存/审批/下单、幂等写操作
 - 差标规则编译与确定性求值、动作准入、审计
-- 制度条款树/引用图/表格、FTS5 + Milvus 混合检索、context pack
+- 制度条款树/引用图/表格、pg_trgm + Milvus 混合检索、context pack
 - revision 修改、审批驳回/通过、取消/暂停
 - Trace/span 全链路记录与树形回放
+- 模型主备切换、结构化输出校验/修复、成本账本
+- JWT/OIDC 鉴权、Redis 限流与缓存
+- 结构化日志、Prometheus 指标、OTel 接入点
 - 12 个端到端/集成场景
 - 观测控制台 API：trace 列表/概览、流转图、Checkpoint 历史、反馈与 badcase 回流
 - 审批工作台 API：审批列表/详情、任务当前状态
@@ -65,11 +93,11 @@ uv run ruff check src tests
 ```bash
 cd web
 npm install        # 由你安装前端依赖
-npm run dev        # http://127.0.0.1:5173
+npm run dev        # http://127.0.0.1:5211
 ```
 
 Vite 会把 `/chat`、`/tasks`、`/traces`、`/admin`、`/feedback`、`/badcases`
-代理到本地后端 `127.0.0.1:8000`。
+代理到本地后端 `127.0.0.1:8000`。Compose 中的 Web 使用 Nginx 在 `8080` 提供构建产物。
 
 页面：
 

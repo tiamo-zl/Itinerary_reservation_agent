@@ -1159,3 +1159,25 @@ observability:
 - **差标**：企业差旅标准，包含机票、酒店等费用与舱位限制；
 - **Guard**：动作准入判断，决定某一步能否执行；
 - **Trace**：一次请求的完整调用链，由多个 Span 组成。
+
+## 19. 生产化改造（P0，2026-11-01）
+
+P0 把 demo 的工程机制升级为可长期运行的基线，外部业务系统仍保持 mock。
+
+| 能力 | 实现 |
+|---|---|
+| 业务存储 | PostgreSQL 17 + Alembic；psycopg 3 连接池与显式事务 |
+| Checkpoint | `langgraph-checkpoint-postgres`；独立连接池，不迁移历史 SQLite checkpoint |
+| 进程形态 | API 无状态；worker 负责 outbox relay、审批兜底轮询、保留清理 |
+| 审批恢复 | 审批决定 + outbox 同事务；`FOR UPDATE SKIP LOCKED` + 指数退避 |
+| 并发控制 | 任务恢复 lease + `version` 乐观递增；用户与 worker 只能有一个赢家 |
+| 鉴权 | mock（仅 local/test）、HS256 JWT、OIDC JWKS；生产启动拒绝 mock |
+| 限流/缓存 | Redis 固定窗口限流；LLM 缓存 Redis 优先、PostgreSQL 回退 |
+| 模型网关 | 主备切换、结构化输出校验与一次修复、定价表、调用账本 |
+| 可观测 | JSON 日志（trace/task/request 上下文 + 脱敏）、Prometheus 指标、OTel 接入点 |
+| 部署 | Dockerfile、Compose core（PG/Redis/API/worker/Web/migrate）、GitHub Actions |
+| 边界 | SQL 只允许在 `infra/repositories/`；依赖方向由测试强制 |
+
+设计取舍见 `docs/adr/`，部署与故障处理见 `docs/runbooks/`。P1 将补齐
+OTel Collector → SkyWalking/Langfuse/Prometheus/ELK 的完整扇出、评测金标集、
+HTTP mock 服务、前端鉴权与混沌/安全测试。
