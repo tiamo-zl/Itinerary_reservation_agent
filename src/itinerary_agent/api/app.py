@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 
+from itinerary_agent.api.auth import PUBLIC_PATHS, AuthError, AuthService
 from itinerary_agent.api.routes import build_router
 from itinerary_agent.application.errors import AppError
 from itinerary_agent.infra.container import Container
@@ -23,13 +24,30 @@ def create_app(container: Container) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # 启动时建立 SQLite 连接；关闭时统一释放。
+        # 启动时连接 PostgreSQL/Redis/Checkpoint；关闭时统一释放。
         await container.start()
         yield
         await container.stop()
 
     app = FastAPI(title="Itinerary Reservation Agent", lifespan=lifespan)
     app.state.container = container
+    auth_service = AuthService(container.settings)
+
+    @app.middleware("http")
+    async def authenticate(request: Request, call_next):
+        """先认证再进业务路由；健康检查与静态页保持公开。"""
+        if request.url.path in PUBLIC_PATHS:
+            return await call_next(request)
+        try:
+            request.state.ctx = await auth_service.authenticate(request)
+        except AuthError as exc:
+            return JSONResponse(
+                status_code=401,
+                content={"error": exc.message, "code": exc.code},
+            )
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request.state.ctx.request_id
+        return response
 
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError):

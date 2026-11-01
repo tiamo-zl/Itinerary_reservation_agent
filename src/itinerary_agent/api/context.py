@@ -1,9 +1,10 @@
 """请求上下文构造与本地 mock 鉴权。
 
-生产环境应由真实鉴权中间件解析 token；demo 用请求头映射 mock 用户，
-但上下文对象的形状与生产保持一致。
+生产环境由 auth 中间件解析 JWT/OIDC；mock 模式用请求头映射本地用户。
+两种模式最终都落到同一个 RequestContext 形状。
 """
 
+import re
 from uuid import uuid4
 
 from fastapi import Request
@@ -16,20 +17,66 @@ MOCK_USERS = {
     "u003": {"tenant_id": "other-company", "roles": ["employee"]},
 }
 
+# mock 模式从角色推导 scopes；真实 OIDC 由 token 的 scopes claim 决定。
+ROLE_SCOPES = {
+    "employee": {
+        "chat", "task:read", "conversation:read",
+        "trace:read", "feedback:write",
+    },
+    "approver": {"approval:read", "approval:decide", "badcase:manage"},
+    "admin": {
+        "chat", "task:read", "conversation:read", "trace:read",
+        "feedback:write", "approval:read", "approval:decide",
+        "badcase:manage", "admin",
+    },
+}
 
-def build_context(request: Request, session_id: str | None = None) -> RequestContext:
-    """从请求头构造上下文。
+_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
-    - X-Mock-User：模拟当前用户，默认 u001
-    - X-Trace-Id：允许调用方传入 trace，便于跨系统串联
-    - X-Session-Id：会话 ID，优先使用请求体中的 session_id
-    """
+
+def scopes_for_roles(roles: list[str]) -> list[str]:
+    scopes: set[str] = set()
+    for role in roles:
+        scopes.update(ROLE_SCOPES.get(role, set()))
+    return sorted(scopes)
+
+
+def request_id_of(request: Request) -> str:
+    """接受安全的 X-Request-ID，否则生成新的 UUID。"""
+    value = request.headers.get("X-Request-ID")
+    if value and _REQUEST_ID.match(value):
+        return value
+    return uuid4().hex
+
+
+def mock_context(request: Request,
+                 request_id: str | None = None) -> RequestContext:
+    """本地 mock 鉴权：X-Mock-User → 用户/租户/角色。"""
     user_id = request.headers.get("X-Mock-User", "u001")
     mock = MOCK_USERS.get(user_id, MOCK_USERS["u001"])
+    roles = list(mock["roles"])
     return RequestContext(
         trace_id=request.headers.get("X-Trace-Id") or uuid4().hex,
         tenant_id=mock["tenant_id"],
         user_id=user_id,
-        roles=mock["roles"],
-        session_id=session_id or request.headers.get("X-Session-Id", "default-session"),
+        roles=roles,
+        scopes=scopes_for_roles(roles),
+        auth_method="mock",
+        request_id=request_id or request_id_of(request),
+        session_id=request.headers.get("X-Session-Id", "default-session"),
     )
+
+
+def build_context(request: Request,
+                  session_id: str | None = None) -> RequestContext:
+    """取中间件已认证的上下文；没有时回退到 mock（便于直接调用/测试）。
+
+    请求体里的 session_id 优先级最高，其次是 X-Session-Id。
+    """
+    ctx = getattr(request.state, "ctx", None) or mock_context(request)
+    return ctx.model_copy(update={
+        "session_id": (
+            session_id
+            or request.headers.get("X-Session-Id", ctx.session_id)
+        )
+    })

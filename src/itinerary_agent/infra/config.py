@@ -6,6 +6,7 @@
 
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +31,12 @@ class Settings(BaseSettings):
 
     # 鉴权：mock 仅允许 local/test；生产必须 jwt/oidc。
     auth_mode: Literal["mock", "jwt", "oidc"] = "mock"
+    jwt_secret: str | None = None
+    jwt_issuer: str = "itinerary-agent-local"
+    jwt_audience: str = "itinerary-agent"
+    oidc_issuer: str | None = None
+    oidc_audience: str = "itinerary-agent"
+    oidc_jwks_url: str | None = None
 
     # 后台 worker：outbox 轮询与租约。
     outbox_poll_interval: float = 1.0
@@ -90,3 +97,22 @@ class Settings(BaseSettings):
     policy_seed_top_k: int = 8
     policy_graph_hops: int = 2
     policy_max_expanded_clauses: int = 20
+
+    @model_validator(mode="after")
+    def _validate_auth_for_environment(self):
+        """生产环境禁止可伪造的 mock 鉴权，并校验必需配置。"""
+        if self.environment == "prod":
+            if self.auth_mode == "mock":
+                raise ValueError(
+                    "AUTH_MODE=mock is not allowed when ENVIRONMENT=prod"
+                )
+            if self.auth_mode == "jwt" and not self.jwt_secret:
+                raise ValueError("JWT_SECRET is required when AUTH_MODE=jwt")
+            if self.auth_mode == "oidc" and not (
+                self.oidc_issuer and self.oidc_jwks_url
+            ):
+                raise ValueError(
+                    "OIDC_ISSUER and OIDC_JWKS_URL are required when "
+                    "AUTH_MODE=oidc"
+                )
+        return self

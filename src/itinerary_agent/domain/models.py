@@ -61,6 +61,9 @@ class RequestContext(BaseModel):
     tenant_id: str
     user_id: str
     roles: list[str] = Field(default_factory=list)
+    scopes: list[str] = Field(default_factory=list)
+    auth_method: str = "mock"
+    request_id: str = ""
     session_id: str
     locale: str = "zh-CN"
 

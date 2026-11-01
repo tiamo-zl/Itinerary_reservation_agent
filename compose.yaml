@@ -109,6 +109,20 @@ services:
       start_period: 20s
     stop_grace_period: 30s
 
+  mock-idp:
+    image: itinerary-reservation-agent:local
+    profiles: ["mocks"]
+    command:
+      ["uvicorn", "--app-dir", "src",
+       "itinerary_agent.mock_services.identity:app",
+       "--host", "0.0.0.0", "--port", "9002"]
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_ISSUER: ${JWT_ISSUER:-itinerary-agent-local}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-itinerary-agent}
+    ports:
+      - "127.0.0.1:9002:9002"
+
   web:
     build:
       context: ./web
