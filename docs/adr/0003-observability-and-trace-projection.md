@@ -27,6 +27,19 @@ logs and a business view that external tools cannot provide.
 - Tracing backends in P1: OTel Collector fans out to SkyWalking and Langfuse;
   Prometheus/Grafana handles metrics; ELK handles logs.
 
+## P1 extension
+
+- `deploy/otel/collector-config.yaml` fans traces out to SkyWalking and
+  Langfuse, logs to an Elasticsearch data stream (`logs-itinerary`), and
+  exposes Collector metrics to Prometheus.
+- Langfuse receives only spans carrying `task_id`; HTTP/DB instrumentation is
+  filtered out.
+- Prometheus scrapes API, worker, and Collector; Grafana provisions the
+  `Itinerary Agent` dashboard and alerts.
+- The Collector joins the external `langfuse-stack_default` and
+  `monitoring-stack_monitoring` networks so backends are reached by service
+  name rather than host ports.
+
 ## Consequences
 
 - P0 emits OTel spans but does not yet guarantee identical trace IDs between

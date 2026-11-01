@@ -70,6 +70,22 @@ make typecheck
 
 设计取舍见 `docs/adr/`，运维步骤见 `docs/runbooks/`。
 
+## 五件套可观测
+
+```bash
+make obs-up    # 自动读取 Langfuse key，启动 core + observability
+```
+
+- Grafana：http://127.0.0.1:13001（admin/admin）
+- Prometheus：http://127.0.0.1:19091
+- SkyWalking UI：http://127.0.0.1:18080
+- Kibana：http://127.0.0.1:5601（data stream `logs-itinerary`）
+- Langfuse：http://127.0.0.1:3030
+
+数据流：应用 OTLP → Collector → SkyWalking / Langfuse；Docker 日志 → Elasticsearch；
+Prometheus 抓取 API/worker/Collector 指标；Grafana 自动加载看板。
+详见 `docs/runbooks/observability.md`。
+
 ## 已实现
 
 - 七层分包、应用服务/仓储分层、依赖与 SQL 边界检查

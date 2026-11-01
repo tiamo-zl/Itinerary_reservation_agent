@@ -17,6 +17,8 @@ x-app-env: &app-env
   MODEL_MODE: scripted
   ADAPTER_MODE: mock
   AUTH_MODE: mock
+  OTEL_ENABLED: ${OTEL_ENABLED:-false}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318/v1/traces}
 
 services:
   postgres:
@@ -123,6 +125,52 @@ services:
     ports:
       - "127.0.0.1:9002:9002"
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    profiles: ["observability"]
+    user: "0:0"
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      LANGFUSE_AUTH: ${LANGFUSE_AUTH:-}
+    volumes:
+      - ./deploy/otel/collector-config.yaml:/etc/otelcol/config.yaml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks:
+      - default
+      - langfuse-stack_default
+      - monitoring-stack_monitoring
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:8889:8889"
+
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - promdata:/prometheus
+    ports:
+      - "127.0.0.1:19091:9090"
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "127.0.0.1:13001:3000"
+    depends_on:
+      - prometheus
+
   web:
     build:
       context: ./web
@@ -138,6 +186,14 @@ services:
       timeout: 5s
       retries: 10
 
+networks:
+  langfuse-stack_default:
+    external: true
+  monitoring-stack_monitoring:
+    external: true
+
 volumes:
   pgdata:
   redisdata:
+  promdata:
+  grafanadata:

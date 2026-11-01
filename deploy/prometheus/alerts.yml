@@ -1,0 +1,38 @@
+groups:
+  - name: itinerary
+    rules:
+      - alert: HighHttpErrorRate
+        expr: |
+          sum(rate(itinerary_http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(itinerary_http_requests_total[5m])), 0.001)
+          > 0.02
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HTTP 5xx rate is above 2%"
+
+      - alert: ModelFallbackSpike
+        expr: sum(rate(itinerary_model_calls_total{fallback="True"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model fallback rate is elevated"
+
+      - alert: RateLimitSpike
+        expr: sum(rate(itinerary_rate_limited_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "Rate limiter is rejecting traffic"
+
+      - alert: OutboxFailures
+        expr: sum(rate(itinerary_outbox_events_total{status="failed"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox relay has failed events"

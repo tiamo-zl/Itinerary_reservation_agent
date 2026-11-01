@@ -1,0 +1,79 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # 读取 Docker json-file 日志；只做 Docker 外壳解析，body 保留应用 JSON。
+  filelog:
+    include:
+      - /var/lib/docker/containers/*/*-json.log
+    start_at: end
+    include_file_path: true
+    operators:
+      - type: json_parser
+        parse_from: body
+        parse_to: attributes.docker
+      - type: move
+        from: attributes.docker.log
+        to: body
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+  # Langfuse 只看 Agent/模型语义，避免把 HTTP/DB span 也当作 LLM 调用。
+  filter/langfuse:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["task_id"] == nil'
+
+exporters:
+  # SkyWalking 11 的 OTel receiver 使用 gRPC 11800。
+  otlp/skywalking:
+    endpoint: skywalking-oap:11800
+    tls:
+      insecure: true
+
+  # Langfuse v4 要求 ingestion-version 头；Authorization 为 pk:sk 的 base64。
+  otlphttp/langfuse:
+    endpoint: http://langfuse-web:3000/api/public/otel
+    headers:
+      Authorization: "Basic ${env:LANGFUSE_AUTH}"
+      x-langfuse-ingestion-version: "4"
+
+  # 供 Prometheus 抓取 Collector 自身的指标。
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+  # 日志写入宿主机已有的 Elasticsearch。
+  elasticsearch:
+    endpoints: ["http://elasticsearch:9200"]
+    logs_index: "logs-itinerary"
+
+service:
+  pipelines:
+    traces/skywalking:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/skywalking]
+    traces/langfuse:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/langfuse, batch]
+      exporters: [otlphttp/langfuse]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [filelog]
+      processors: [memory_limiter, batch]
+      exporters: [elasticsearch]

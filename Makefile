@@ -1,7 +1,7 @@
 DATABASE_URL ?= postgresql://itinerary:itinerary_dev@127.0.0.1:55432/itinerary
 TEST_DATABASE_URL ?= postgresql://itinerary:itinerary_dev@127.0.0.1:55432/itinerary_test
 
-.PHONY: db-up db-down db-logs migrate revision api worker idp test lint typecheck web-build smoke
+.PHONY: db-up db-down db-logs migrate revision api worker idp obs-up obs-down test lint typecheck web-build smoke
 
 # 只启动 P0 需要的基础设施，不构建应用镜像。
 db-up:
@@ -27,6 +27,12 @@ worker:
 
 idp:
 	uv run uvicorn --app-dir src itinerary_agent.mock_services.identity:app --reload --host 127.0.0.1 --port 9002
+
+obs-up:
+	./scripts/up-observability.sh
+
+obs-down:
+	docker compose --profile observability down
 
 test:
 	TEST_DATABASE_URL=$(TEST_DATABASE_URL) uv run pytest -q
