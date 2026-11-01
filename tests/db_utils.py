@@ -23,6 +23,8 @@ def make_test_settings(**overrides) -> Settings:
         "model_mode": "scripted",
         "adapter_mode": "mock",
         "mock_approval_delay_seconds": 999,
+        # 测试用例共用 Redis；限流单独用 fakeredis 验证。
+        "rate_limit_enabled": False,
     }
     values.update(overrides)
     return Settings(**values)

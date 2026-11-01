@@ -65,8 +65,15 @@ class Settings(BaseSettings):
     fallback_model_reasoning: str = "qwen-plus"
 
     # 模型缓存与价格表。
+    llm_cache_backend: Literal["auto", "redis", "postgres", "none"] = "auto"
     llm_cache_ttl_seconds: int = 86400
     model_pricing_file: str = "config/pricing.yaml"
+
+    # 接口限流：按用户/租户的每分钟固定窗口。
+    rate_limit_enabled: bool = True
+    rate_limit_chat_per_minute: int = 30
+    rate_limit_approval_per_minute: int = 60
+    rate_limit_feedback_per_minute: int = 20
 
     # Embedding：阿里云百炼的 OpenAI 兼容接口。
     # 维度在建 Milvus collection 时确定，后续不能混用不同维度。

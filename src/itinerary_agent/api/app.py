@@ -16,6 +16,20 @@ from itinerary_agent.application.errors import AppError
 from itinerary_agent.infra.container import Container
 
 
+def _rate_limit_scope(request: Request) -> str | None:
+    """只对高成本/敏感写入口限流。"""
+    if request.method != "POST":
+        return None
+    path = request.url.path
+    if path == "/chat":
+        return "chat"
+    if path.startswith("/admin/approvals/"):
+        return "approval"
+    if path == "/feedback":
+        return "feedback"
+    return None
+
+
 def create_app(container: Container) -> FastAPI:
     """创建 FastAPI 应用，并把容器绑定到应用生命周期。
 
@@ -45,8 +59,31 @@ def create_app(container: Container) -> FastAPI:
                 status_code=401,
                 content={"error": exc.message, "code": exc.code},
             )
+
+        ctx = request.state.ctx
+        scope = _rate_limit_scope(request)
+        decision = None
+        if scope is not None and container.rate_limiter is not None:
+            decision = await container.rate_limiter.check(
+                scope, f"{ctx.tenant_id}:{ctx.user_id}"
+            )
+            if not decision.allowed:
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "error": "too many requests",
+                        "code": "RATE_LIMITED",
+                    },
+                    headers={"Retry-After": str(decision.retry_after or 1)},
+                )
+
         response = await call_next(request)
-        response.headers["X-Request-ID"] = request.state.ctx.request_id
+        if decision is not None:
+            response.headers["X-RateLimit-Limit"] = str(decision.limit)
+            response.headers["X-RateLimit-Remaining"] = str(
+                decision.remaining
+            )
+        response.headers["X-Request-ID"] = ctx.request_id
         return response
 
     @app.exception_handler(AppError)

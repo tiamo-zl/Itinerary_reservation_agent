@@ -8,7 +8,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from time import perf_counter
 from uuid import uuid4
 
@@ -17,6 +17,7 @@ from openai import AsyncOpenAI
 from itinerary_agent.domain.models import CallContext, Completion, ModelTier
 from itinerary_agent.infra.config import Settings
 from itinerary_agent.infra.db import Database
+from itinerary_agent.model_gateway.cache import LLMCache, PostgresLLMCache
 from itinerary_agent.model_gateway.errors import ModelOutputError, ModelUnavailable
 from itinerary_agent.model_gateway.json_output import parse_and_validate
 from itinerary_agent.model_gateway.pricing import PriceTable
@@ -46,7 +47,8 @@ class _NullSpan:
 
 class OpenAIChatGateway:
     def __init__(self, settings: Settings, db: Database | None = None,
-                 traces=None, primary_client=None, fallback_client=None):
+                 traces=None, primary_client=None, fallback_client=None,
+                 cache: LLMCache | None = None):
         self.settings = settings
         self.db = db
         self.traces = traces
@@ -69,6 +71,12 @@ class OpenAIChatGateway:
         else:
             self.fallback_client = None
         self.pricing = PriceTable.load(settings.model_pricing_file)
+        # 默认保留 PostgreSQL 缓存，便于单测/无 Redis 环境；
+        # 生产由容器注入 Redis 实现。
+        self.cache = cache or (
+            PostgresLLMCache(db, settings.llm_cache_ttl_seconds)
+            if db is not None else None
+        )
 
     def _candidates(self, tier: ModelTier) -> list[tuple[str, object, str]]:
         """主提供方优先，备用提供方只在配置了 key 时加入。"""
@@ -104,8 +112,8 @@ class OpenAIChatGateway:
         # 步骤 3：只缓存确定性高的用途。
         cacheable = ctx.purpose in {"classify", "understand"}
         cache_key = self._cache_key(ctx, tier, messages, response_schema)
-        if cacheable and self.db is not None:
-            cached = await self._cache_get(cache_key)
+        if cacheable and self.cache is not None:
+            cached = await self.cache.get(cache_key)
             if cached:
                 # 命中缓存不产生新的模型费用；token 数保留便于统计。
                 completion = Completion.model_validate_json(cached).model_copy(
@@ -176,8 +184,8 @@ class OpenAIChatGateway:
                 result.completion_tokens, cost, duration_ms,
                 status="ok", fallback_from=fallback_from, attempt=attempt,
             )
-            if cacheable and self.db is not None:
-                await self._cache_set(cache_key, result.model_dump_json())
+            if cacheable and self.cache is not None:
+                await self.cache.set(cache_key, result.model_dump_json())
             return result
 
         raise ModelUnavailable("所有模型提供方均不可用") from last_error
@@ -241,36 +249,6 @@ class OpenAIChatGateway:
                 payload, sort_keys=True, ensure_ascii=False, default=str
             ).encode()
         ).hexdigest()
-
-    async def _cache_get(self, cache_key: str) -> str | None:
-        try:
-            row = await self.db.fetchone(
-                "SELECT value FROM llm_cache WHERE cache_key = ? "
-                "AND (expires_at IS NULL OR expires_at > now())",
-                (cache_key,),
-            )
-            return row["value"] if row else None
-        except Exception:
-            logger.exception("llm cache read failed")
-            return None
-
-    async def _cache_set(self, cache_key: str, value: str) -> None:
-        expires_at = datetime.now(UTC) + timedelta(
-            seconds=self.settings.llm_cache_ttl_seconds
-        )
-        try:
-            await self.db.execute(
-                "INSERT INTO llm_cache (cache_key, value, created_at, expires_at) "
-                "VALUES (?, ?, ?, ?) ON CONFLICT (cache_key) DO UPDATE SET "
-                "value=EXCLUDED.value, created_at=EXCLUDED.created_at, "
-                "expires_at=EXCLUDED.expires_at",
-                (
-                    cache_key, value, datetime.now(UTC).isoformat(),
-                    expires_at.isoformat(),
-                ),
-            )
-        except Exception:
-            logger.exception("llm cache write failed")
 
     async def _record(self, ctx: CallContext, provider: str, model: str,
                       prompt_tokens: int, completion_tokens: int, cost: float,

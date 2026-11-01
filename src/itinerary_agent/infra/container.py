@@ -25,6 +25,8 @@ class Container:
     redis: object | None = None
 
     model: object | None = None
+    llm_cache: object | None = None
+    rate_limiter: object | None = None
     orchestrator: object | None = None
     tools: object | None = None
     knowledge: object | None = None
@@ -207,11 +209,30 @@ class Container:
 
     async def _init_live_model_and_knowledge(self) -> None:
         """按 live 模式装配真实模型网关与制度检索。"""
+        if self.llm_cache is None:
+            from itinerary_agent.model_gateway.cache import (
+                PostgresLLMCache,
+                RedisLLMCache,
+            )
+
+            backend = self.settings.llm_cache_backend
+            if backend in {"auto", "redis"} and self.redis is not None:
+                self.llm_cache = RedisLLMCache(
+                    self.redis,
+                    self.settings.llm_cache_ttl_seconds,
+                    prefix=f"{self.settings.environment}:llm:",
+                )
+            elif backend in {"auto", "postgres"} and self.db is not None:
+                self.llm_cache = PostgresLLMCache(
+                    self.db, self.settings.llm_cache_ttl_seconds
+                )
+
         if self.model is None:
             from itinerary_agent.model_gateway.gateway import OpenAIChatGateway
 
             self.model = OpenAIChatGateway(
-                self.settings, self.db, traces=self.traces
+                self.settings, self.db, traces=self.traces,
+                cache=self.llm_cache,
             )
 
         if self.knowledge is None:
@@ -339,6 +360,11 @@ class Container:
         self.approval_queries = self.approval_queries or ApprovalQueryService(
             self.approval_repo, self.task_repo, self.orchestrator,
             self.approvals, self.outbox_repo, self.db,
+        )
+        from itinerary_agent.infra.rate_limit import RateLimiter
+
+        self.rate_limiter = self.rate_limiter or RateLimiter(
+            self.redis, self.settings
         )
         self.readiness = self.readiness or ReadinessService(
             self.db, self.redis, self.checkpointer
