@@ -6,7 +6,16 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from itinerary_agent.application.access import require_admin, require_found
+from itinerary_agent.application.access import (
+    require_admin,
+    require_found,
+    require_scope,
+)
+from itinerary_agent.application.pagination import (
+    build_page,
+    decode_cursor,
+    normalize_limit,
+)
 from itinerary_agent.application.ports import FeedbackRepositoryPort
 from itinerary_agent.domain.models import RequestContext
 
@@ -17,6 +26,7 @@ class FeedbackService:
 
     async def submit(self, ctx: RequestContext, feedback: dict) -> dict:
         """创建 badcase；文本已由网关脱敏，这里只补租户和时间。"""
+        require_scope(ctx, "feedback:write")
         badcase_id = uuid4().hex
         now = datetime.now(UTC).isoformat()
         await self.feedback_repo.create({
@@ -38,13 +48,27 @@ class FeedbackService:
 
     async def list_badcases(self, ctx: RequestContext,
                             status: str | None = None,
-                            limit: int = 50) -> dict:
+                            limit: int = 50,
+                            cursor: str | None = None) -> dict:
+        require_scope(ctx, "badcase:manage")
         require_admin(ctx)
-        return {"badcases": await self.feedback_repo.list_badcases(status, limit)}
+        page_size = normalize_limit(limit)
+        rows = await self.feedback_repo.list_badcases(
+            status, page_size, decode_cursor(cursor)
+        )
+        rows, next_cursor = build_page(
+            rows, page_size,
+            lambda row: {
+                "created_at": row["created_at"],
+                "badcase_id": row["badcase_id"],
+            },
+        )
+        return {"badcases": rows, "next_cursor": next_cursor}
 
     async def update(self, ctx: RequestContext, badcase_id: str,
                      changes: dict) -> dict:
         """推进 badcase 状态；只更新显式传入的字段。"""
+        require_scope(ctx, "badcase:manage")
         require_admin(ctx)
         require_found(await self.feedback_repo.get(badcase_id), "badcase")
         if changes:

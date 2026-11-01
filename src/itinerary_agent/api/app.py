@@ -9,8 +9,10 @@ from pathlib import Path
 from time import perf_counter
 
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from itinerary_agent.api.auth import PUBLIC_PATHS, AuthError, AuthService
 from itinerary_agent.api.routes import build_router
@@ -129,6 +131,24 @@ def create_app(container: Container) -> FastAPI:
             return response
         finally:
             clear_request_context()
+
+    # Starlette 的 add_middleware 会插到最前面（越后添加越靠外）。
+    # 在 auth 之后注册，保证顺序是 TrustedHost → CORS → auth：
+    # 预检请求不进入鉴权，Host 校验始终最先执行。
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=container.settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=[
+            "X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining",
+        ],
+    )
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=container.settings.trusted_hosts,
+    )
 
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError):

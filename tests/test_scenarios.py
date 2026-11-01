@@ -126,7 +126,9 @@ async def test_amendment_invalidates_downstream(tmp_path):
             "u002",
         )
         assert last_event(amended, "interrupt")
-        task = client.get(f"/tasks/{task_id}").json()
+        task = client.get(
+            f"/tasks/{task_id}", headers={"X-Mock-User": "u002"}
+        ).json()
         assert task["revision"] == 1
 
 
@@ -142,7 +144,9 @@ async def test_no_results_asks_human(tmp_path):
         events = _chat(client, "去北京", "u002")
         task_id = task_id_of(events)
         assert last_event(events, "interrupt")
-        assert client.get(f"/tasks/{task_id}").json()["status"] == "WAITING_HUMAN"
+        assert client.get(
+            f"/tasks/{task_id}", headers={"X-Mock-User": "u002"}
+        ).json()["status"] == "WAITING_HUMAN"
 
 
 async def test_pause_resume_cancel(tmp_path):
@@ -179,7 +183,9 @@ async def test_tool_failure_and_rag_degraded(tmp_path):
         task_id = task_id_of(events)
         # 工具失败被归一化，知识降级不阻塞主流程，最终停在确认节点。
         assert last_event(events, "interrupt")
-        assert client.get(f"/tasks/{task_id}").json()["status"] == "WAITING_HUMAN"
+        assert client.get(
+            f"/tasks/{task_id}", headers={"X-Mock-User": "u002"}
+        ).json()["status"] == "WAITING_HUMAN"
 
 
 async def test_booking_without_approval_denied():

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from itinerary_agent.infra.db import Database
 
 _LATEST_TASK_SQL = (
@@ -15,18 +17,31 @@ _LATEST_TASK_SQL = (
 )
 
 
+def _as_datetime(value) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value))
+
+
 class PostgresConversationRepository:
     def __init__(self, db: Database):
         self.db = db
 
     async def list_conversations(self, admin: bool, user_id: str,
-                                  tenant_id: str, limit: int) -> list[dict]:
+                                  tenant_id: str, limit: int,
+                                  cursor: dict | None = None) -> list[dict]:
         """会话摘要列表；员工只看自己的，管理员看本租户全部。"""
         where = "WHERE t.tenant_id = ?"
         params: list = [tenant_id]
         if not admin:
             where += " AND t.user_id = ?"
             params.append(user_id)
+        having = ""
+        if cursor:
+            having = "HAVING (MAX(m.created_at), m.session_id) < (?, ?)"
+            params.extend([
+                _as_datetime(cursor["updated_at"]), cursor["session_id"],
+            ])
         rows = await self.db.fetchall(
             "SELECT m.session_id, COUNT(*) AS message_count, "
             "MAX(m.created_at) AS updated_at, "
@@ -36,9 +51,9 @@ class PostgresConversationRepository:
             " ORDER BY m2.id DESC LIMIT 1) AS last_role, "
             "MAX(t.user_id) AS user_id, MAX(t.tenant_id) AS tenant_id "
             "FROM messages m JOIN tasks t ON t.task_id = m.task_id "
-            f"{where} GROUP BY m.session_id "
-            "ORDER BY updated_at DESC LIMIT ?",
-            (*params, limit),
+            f"{where} GROUP BY m.session_id {having} "
+            "ORDER BY MAX(m.created_at) DESC, m.session_id DESC LIMIT ?",
+            (*params, limit + 1),
         )
         result = []
         for row in rows:
@@ -48,8 +63,16 @@ class PostgresConversationRepository:
         return result
 
     async def list_sessions(self, user_id: str, tenant_id: str,
-                            limit: int) -> list[dict]:
+                            limit: int,
+                            cursor: dict | None = None) -> list[dict]:
         """历史对话列表（/sessions），只返回当前员工自己的会话。"""
+        having = ""
+        params: list = [user_id, tenant_id]
+        if cursor:
+            having = "HAVING (MAX(m.created_at), m.session_id) < (?, ?)"
+            params.extend([
+                _as_datetime(cursor["updated_at"]), cursor["session_id"],
+            ])
         rows = await self.db.fetchall(
             "SELECT m.session_id, COUNT(*) AS message_count, "
             "MAX(m.created_at) AS updated_at, "
@@ -59,8 +82,9 @@ class PostgresConversationRepository:
             " ORDER BY m2.id DESC LIMIT 1) AS last_role "
             "FROM messages m JOIN tasks t ON t.task_id = m.task_id "
             "WHERE t.user_id = ? AND t.tenant_id = ? GROUP BY m.session_id "
-            "ORDER BY updated_at DESC LIMIT ?",
-            (user_id, tenant_id, limit),
+            f"{having} ORDER BY MAX(m.created_at) DESC, m.session_id DESC "
+            "LIMIT ?",
+            (*params, limit + 1),
         )
         result = []
         for row in rows:

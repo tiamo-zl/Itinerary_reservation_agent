@@ -63,9 +63,11 @@ make typecheck
 - API / worker 分离；审批通过 outbox + lease 驱动
 - 任务恢复租约，避免用户和 worker 并发恢复
 - JWT / OIDC 鉴权，本地 mock IdP 仅用于开发
-- Redis 限流与 LLM 缓存
+- Redis 限流与 LLM 缓存；span/outbox/缓存/幂等键保留清理
 - 模型主备切换、结构化输出校验/修复、成本账本
-- JSON 日志、Prometheus 指标、OTel 接入点
+- API 加固：CORS/TrustedHost、scope 强制、任务/会话归属、游标分页、SSE 心跳与超时
+- 工具治理：schema/超时/required_scopes/错误分类/审计覆盖
+- JSON 日志、Prometheus 指标与告警、OTel 接入点
 - Dockerfile、Compose core、GitHub Actions CI
 
 设计取舍见 `docs/adr/`，运维步骤见 `docs/runbooks/`。
@@ -77,13 +79,15 @@ make obs-up    # 自动读取 Langfuse key，启动 core + observability
 ```
 
 - Grafana：http://127.0.0.1:13000（monitoring-stack，含 `Itinerary Agent` 看板）
-- Prometheus：http://127.0.0.1:19090
-- SkyWalking UI：http://127.0.0.1:18080
+- Prometheus：http://127.0.0.1:19090（含 `itinerary-agent` 告警规则）
+- SkyWalking UI：http://127.0.0.1:18080（服务目录受限，见 Runbook）
 - Kibana：http://127.0.0.1:5601（data stream `logs-itinerary`）
 - Langfuse：http://127.0.0.1:3030
 
 数据流：应用 OTLP → Collector → SkyWalking / Langfuse；Docker 日志 → Elasticsearch；
 Prometheus 抓取 API/worker/Collector 指标；Grafana 自动加载看板。
+告警规则在 `deploy/prometheus/alerts.yml`，共享 Prometheus 通过
+`/etc/prometheus/rules/itinerary-alerts.yml` 加载。
 详见 `docs/runbooks/observability.md`。
 
 ## 已实现

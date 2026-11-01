@@ -8,7 +8,13 @@
 
 from itinerary_agent.application.access import (
     is_admin,
+    require_scope,
     require_tenant_access,
+)
+from itinerary_agent.application.pagination import (
+    build_page,
+    decode_cursor,
+    normalize_limit,
 )
 from itinerary_agent.application.ports import (
     TaskRepositoryPort,
@@ -35,22 +41,45 @@ class TraceQueryService:
         if task is not None:
             require_tenant_access(ctx, task)
 
-    async def list_traces(self, ctx: RequestContext, limit: int = 50) -> dict:
-        return {
-            "traces": await self.trace_repo.list_traces(
-                limit, tenant_id=self._visible_tenant(ctx)
-            )
-        }
+    async def list_traces(self, ctx: RequestContext, limit: int = 50,
+                          cursor: str | None = None) -> dict:
+        require_scope(ctx, "trace:read")
+        page_size = normalize_limit(limit)
+        rows = await self.trace_repo.list_traces(
+            page_size,
+            tenant_id=self._visible_tenant(ctx),
+            cursor=decode_cursor(cursor),
+        )
+        traces, next_cursor = build_page(
+            rows, page_size,
+            lambda item: {
+                "started_at": item["started_at"],
+                "trace_id": item["trace_id"],
+            },
+        )
+        return {"traces": traces, "next_cursor": next_cursor}
 
     async def list_task_summaries(self, ctx: RequestContext,
-                                  limit: int = 50) -> dict:
-        return {
-            "tasks": await self.trace_repo.list_task_summaries(
-                limit, tenant_id=self._visible_tenant(ctx)
-            )
-        }
+                                  limit: int = 50,
+                                  cursor: str | None = None) -> dict:
+        require_scope(ctx, "trace:read")
+        page_size = normalize_limit(limit)
+        rows = await self.trace_repo.list_task_summaries(
+            page_size,
+            tenant_id=self._visible_tenant(ctx),
+            cursor=decode_cursor(cursor),
+        )
+        tasks, next_cursor = build_page(
+            rows, page_size,
+            lambda item: {
+                "updated_at": item["updated_at"],
+                "task_id": item["task_id"],
+            },
+        )
+        return {"tasks": tasks, "next_cursor": next_cursor}
 
     async def list_task_traces(self, ctx: RequestContext, task_id: str) -> dict:
+        require_scope(ctx, "trace:read")
         task = await self.task_repo.get(task_id)
         self._require_cluster_access(ctx, task)
         return {
@@ -58,17 +87,19 @@ class TraceQueryService:
             "traces": await self.trace_repo.list_traces_for_task(task_id),
         }
 
-    async def overview(self) -> dict:
+    async def overview(self, ctx: RequestContext) -> dict:
         """线上概览。
 
         聚合指标目前是全局的；生产环境应按租户在分析存储里预聚合。
         """
+        require_scope(ctx, "trace:read")
         snapshot = await self.trace_repo.overview_snapshot()
         recent = await self.trace_repo.list_traces(limit=10)
         return build_overview(snapshot, recent)
 
     async def get_trace(self, ctx: RequestContext, trace_id: str) -> dict:
         """Trace 回放详情：任务索引 + 调用树。"""
+        require_scope(ctx, "trace:read")
         task = await self.task_repo.find_by_trace(trace_id)
         self._require_cluster_access(ctx, task)
         return {
@@ -80,6 +111,7 @@ class TraceQueryService:
 
     async def get_flow(self, ctx: RequestContext, trace_id: str) -> dict:
         """编排流转图：只取 orchestration 层 span 生成时间线。"""
+        require_scope(ctx, "trace:read")
         task = await self.task_repo.find_by_trace(trace_id)
         self._require_cluster_access(ctx, task)
         flow = build_flow(await self.trace_repo.load_flow_spans(trace_id))

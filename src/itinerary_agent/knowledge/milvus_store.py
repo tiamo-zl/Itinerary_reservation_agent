@@ -13,7 +13,8 @@ class MilvusClauseStore:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.client = MilvusClient(
-            uri=settings.milvus_uri, token=settings.milvus_token
+            uri=settings.milvus_uri,
+            token=settings.milvus_token.get_secret_value(),
         )
 
     def ensure_collection(self) -> None:

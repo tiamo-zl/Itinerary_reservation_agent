@@ -55,6 +55,8 @@ jobs:
         run: >
           uv run mypy
           src/itinerary_agent/application
+          src/itinerary_agent/security
+          src/itinerary_agent/tools
           src/itinerary_agent/workers
           src/itinerary_agent/infra/database.py
           src/itinerary_agent/infra/repositories

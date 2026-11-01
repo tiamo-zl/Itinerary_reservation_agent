@@ -54,6 +54,25 @@ OUTBOX_EVENTS = Counter(
     "Outbox events processed by status",
     ["status"],
 )
+OUTBOX_BACKLOG = Gauge(
+    "itinerary_outbox_backlog",
+    "Pending or retryable outbox events",
+)
+TOOL_CALLS = Counter(
+    "itinerary_tool_calls_total",
+    "Tool invocations by tool, status and error code",
+    ["tool", "status", "code"],
+)
+TOOL_DURATION = Histogram(
+    "itinerary_tool_duration_seconds",
+    "Tool latency",
+    ["tool"],
+)
+RETENTION_DELETED = Counter(
+    "itinerary_retention_deleted_rows_total",
+    "Rows deleted by the retention worker",
+    ["table"],
+)
 
 
 def normalize_path(path: str) -> str:

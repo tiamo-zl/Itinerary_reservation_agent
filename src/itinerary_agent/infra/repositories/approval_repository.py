@@ -4,7 +4,15 @@
 这里只负责按前端需要的形状读审批单，并把任务归属字段带上。
 """
 
+from datetime import datetime
+
 from itinerary_agent.infra.db import Database
+
+
+def _as_datetime(value) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value))
 
 _APPROVAL_SQL = (
     "SELECT a.*, t.trace_id, t.user_id, t.tenant_id AS task_tenant_id, "
@@ -17,10 +25,19 @@ class PostgresApprovalRepository:
     def __init__(self, db: Database):
         self.db = db
 
-    async def list_by_status(self, status: str, limit: int) -> list[dict]:
+    async def list_by_status(self, status: str, limit: int,
+                             cursor: dict | None = None) -> list[dict]:
+        where = "WHERE a.status = ?"
+        params: list = [status]
+        if cursor:
+            where += " AND (a.created_at, a.approval_id) < (?, ?)"
+            params.extend([
+                _as_datetime(cursor["created_at"]), cursor["approval_id"],
+            ])
         rows = await self.db.fetchall(
-            _APPROVAL_SQL + "WHERE a.status = ? ORDER BY a.created_at DESC LIMIT ?",
-            (status, limit),
+            _APPROVAL_SQL + f"{where} "
+            "ORDER BY a.created_at DESC, a.approval_id DESC LIMIT ?",
+            (*params, limit + 1),
         )
         return [dict(row) for row in rows]
 

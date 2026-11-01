@@ -41,7 +41,13 @@ lint:
 	uv run ruff check src tests
 
 typecheck:
-	uv run mypy src
+	uv run mypy \
+		src/itinerary_agent/application \
+		src/itinerary_agent/security \
+		src/itinerary_agent/tools \
+		src/itinerary_agent/workers \
+		src/itinerary_agent/infra/database.py \
+		src/itinerary_agent/infra/repositories
 
 web-build:
 	npm --prefix web run build

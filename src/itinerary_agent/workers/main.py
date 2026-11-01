@@ -48,6 +48,12 @@ def create_worker_app(container: Container) -> FastAPI:
         result["checks"]["outbox_relay"] = (
             "ok" if container.outbox_relay is not None else "error"
         )
+        result["checks"]["retention"] = (
+            "ok" if (
+                not container.settings.retention_enabled
+                or container.retention_worker is not None
+            ) else "error"
+        )
         if any(value != "ok" for value in result["checks"].values()):
             result["status"] = "degraded"
         return JSONResponse(

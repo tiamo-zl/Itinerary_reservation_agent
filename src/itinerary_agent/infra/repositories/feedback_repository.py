@@ -9,6 +9,12 @@ from datetime import UTC, datetime
 from itinerary_agent.infra.db import Database
 
 
+def _as_datetime(value) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value))
+
+
 class PostgresFeedbackRepository:
     def __init__(self, db: Database):
         self.db = db
@@ -27,19 +33,24 @@ class PostgresFeedbackRepository:
             ),
         )
 
-    async def list_badcases(self, status: str | None,
-                            limit: int) -> list[dict]:
+    async def list_badcases(self, status: str | None, limit: int,
+                            cursor: dict | None = None) -> list[dict]:
+        conditions: list[str] = []
+        params: list = []
         if status:
-            rows = await self.db.fetchall(
-                "SELECT * FROM badcases WHERE status = ? "
-                "ORDER BY created_at DESC LIMIT ?",
-                (status, limit),
-            )
-        else:
-            rows = await self.db.fetchall(
-                "SELECT * FROM badcases ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            )
+            conditions.append("status = ?")
+            params.append(status)
+        if cursor:
+            conditions.append("(created_at, badcase_id) < (?, ?)")
+            params.extend([
+                _as_datetime(cursor["created_at"]), cursor["badcase_id"],
+            ])
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await self.db.fetchall(
+            "SELECT * FROM badcases "
+            f"{where} ORDER BY created_at DESC, badcase_id DESC LIMIT ?",
+            (*params, limit + 1),
+        )
         return [dict(row) for row in rows]
 
     async def get(self, badcase_id: str) -> dict | None:

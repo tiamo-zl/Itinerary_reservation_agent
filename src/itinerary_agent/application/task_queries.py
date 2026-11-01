@@ -4,7 +4,11 @@
 两个来源都在这里组合，控制器只拿结果。
 """
 
-from itinerary_agent.application.access import require_found, require_tenant_access
+from itinerary_agent.application.access import (
+    require_found,
+    require_scope,
+    require_task_access,
+)
 from itinerary_agent.application.ports import OrchestrationPort, TaskRepositoryPort
 from itinerary_agent.domain.models import RequestContext
 
@@ -19,9 +23,21 @@ class TaskQueryService:
         """恢复接口复用任务首次请求的 trace，不作为用户可见数据。"""
         return await self.task_repo.get_trace_id(task_id)
 
-    async def get(self, ctx: RequestContext, task_id: str) -> dict:
+    async def authorize_resume(self, ctx: RequestContext,
+                               task_id: str) -> str | None:
+        """恢复任务前确认归属；返回任务 trace 供 SSE 复用。"""
+        require_scope(ctx, "chat")
         task = require_found(await self.task_repo.get(task_id), "task")
-        require_tenant_access(ctx, task)
+        require_task_access(ctx, task)
+        return task.get("trace_id") or await self.task_repo.get_trace_id(
+            task_id
+        )
+
+    async def get(self, ctx: RequestContext, task_id: str) -> dict:
+        require_scope(ctx, "task:read")
+        task = require_found(await self.task_repo.get(task_id), "task")
+        # 任务详情属于个人数据：员工只能看自己的，管理员可跨用户。
+        require_task_access(ctx, task)
         return task
 
     async def get_state(self, ctx: RequestContext, task_id: str) -> dict:

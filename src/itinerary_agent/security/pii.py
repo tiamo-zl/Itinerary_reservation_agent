@@ -18,7 +18,9 @@ def scrub(text: str) -> str:
 
 def _is_identifier_key(key: str | None) -> bool:
     # task_id/trace_id/approval_id 等是系统标识，不能当文本做 PII 替换。
-    return bool(key) and (key == "id" or key.endswith("_id"))
+    if not key:
+        return False
+    return key == "id" or key.endswith("_id")
 
 
 def scrub_obj(value, key: str | None = None):

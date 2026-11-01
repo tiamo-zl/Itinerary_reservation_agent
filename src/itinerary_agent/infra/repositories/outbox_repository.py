@@ -72,3 +72,19 @@ class PostgresOutboxRepository:
             "locked_by = NULL, locked_at = NULL WHERE id = ?",
             (attempts, delay_seconds, event_id),
         )
+
+    async def count_pending(self) -> int:
+        """积压量：待处理 + 可重试 + 处理中，用于告警和看板。"""
+        row = await self.db.fetchone(
+            "SELECT COUNT(*) AS count FROM outbox "
+            "WHERE status IN ('pending', 'processing')"
+        )
+        return int(row["count"] if row else 0)
+
+    async def delete_finished_older_than(self, days: int) -> int:
+        """只清理已完成/死信事件，保留期外的事件仍可人工排查。"""
+        return await self.db.execute(
+            "DELETE FROM outbox WHERE status IN ('done', 'dead') "
+            "AND created_at < now() - (? * interval '1 day')",
+            (days,),
+        )

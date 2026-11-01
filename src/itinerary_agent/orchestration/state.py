@@ -16,6 +16,8 @@ class TravelTaskState(TypedDict, total=False):
     tenant_id: str
     user_id: str
     session_id: str
+    roles: list[str]
+    scopes: list[str]
     status: str
     revision: int
     request: dict
@@ -45,6 +47,9 @@ def initial_state(ctx: RequestContext, message: str) -> TravelTaskState:
         "tenant_id": ctx.tenant_id,
         "user_id": ctx.user_id,
         "session_id": ctx.session_id,
+        # 角色/scope 随任务固化，恢复和 worker 路径不再依赖请求头。
+        "roles": list(getattr(ctx, "roles", []) or []),
+        "scopes": list(getattr(ctx, "scopes", []) or []),
         "status": "PLANNING",
         "revision": 0,
         "request": {"raw_message": message},

@@ -6,7 +6,7 @@
 
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,9 +37,23 @@ class Settings(BaseSettings):
     otel_trace_sampling_ratio: float = 1.0
     log_level: str = "INFO"
 
+    # HTTP 边界：CORS 与 Host 白名单；生产禁止通配符。
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://127.0.0.1:5211",
+            "http://localhost:5211",
+            "http://127.0.0.1:8080",
+            "http://localhost:8080",
+        ]
+    )
+    trusted_hosts: list[str] = Field(default_factory=lambda: ["*"])
+    # SSE：心跳间隔和单轮最长执行时间；0 表示关闭按轮超时。
+    sse_ping_seconds: int = 15
+    chat_turn_timeout_seconds: float = 300.0
+
     # 鉴权：mock 仅允许 local/test；生产必须 jwt/oidc。
     auth_mode: Literal["mock", "jwt", "oidc"] = "mock"
-    jwt_secret: str | None = None
+    jwt_secret: SecretStr | None = None
     jwt_issuer: str = "itinerary-agent-local"
     jwt_audience: str = "itinerary-agent"
     oidc_issuer: str | None = None
@@ -55,7 +69,7 @@ class Settings(BaseSettings):
 
     # 聊天模型：所有档位都走 OpenAI 兼容协议，便于切换厂商。
     deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_api_key: str | None = None
+    deepseek_api_key: SecretStr | None = None
     model_light: str = "deepseek-chat"
     model_standard: str = "deepseek-chat"
     model_reasoning: str = "deepseek-reasoner"
@@ -67,7 +81,7 @@ class Settings(BaseSettings):
     model_fallback_enabled: bool = True
     fallback_provider_name: str = "dashscope"
     fallback_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    fallback_api_key: str | None = None
+    fallback_api_key: SecretStr | None = None
     fallback_model_light: str = "qwen-plus"
     fallback_model_standard: str = "qwen-plus"
     fallback_model_reasoning: str = "qwen-plus"
@@ -86,14 +100,14 @@ class Settings(BaseSettings):
     # Embedding：阿里云百炼的 OpenAI 兼容接口。
     # 维度在建 Milvus collection 时确定，后续不能混用不同维度。
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    dashscope_api_key: str | None = None
+    dashscope_api_key: SecretStr | None = None
     embedding_model: str = "qwen3.7-text-embedding-flash"
     embedding_dimensions: int = 1024
     embedding_batch_size: int = 20
 
     # 制度向量库：使用本地已有的 Milvus 服务，不启动嵌入式版本。
     milvus_uri: str = "http://127.0.0.1:19530"
-    milvus_token: str = ""
+    milvus_token: SecretStr = SecretStr("")
     milvus_collection: str = "itinerary_policy_clauses_v1"
 
     # 运行模式：
@@ -102,6 +116,10 @@ class Settings(BaseSettings):
     adapter_mode: Literal["mock", "real"] = "mock"
     model_mode: Literal["scripted", "live"] = "scripted"
     trace_retention_days: int = 7
+    outbox_retention_days: int = 30
+    idempotency_retention_days: int = 7
+    retention_enabled: bool = True
+    retention_interval_seconds: int = 3600
     capture_prompt: bool = False
     mock_approval_delay_seconds: float = 5.0
     # 默认手动审批，审批页才能真正展示待办；需要自动通过时显式开启。
@@ -121,7 +139,7 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "AUTH_MODE=mock is not allowed when ENVIRONMENT=prod"
                 )
-            if self.auth_mode == "jwt" and not self.jwt_secret:
+            if self.auth_mode == "jwt" and not _secret(self.jwt_secret):
                 raise ValueError("JWT_SECRET is required when AUTH_MODE=jwt")
             if self.auth_mode == "oidc" and not (
                 self.oidc_issuer and self.oidc_jwks_url
@@ -130,4 +148,27 @@ class Settings(BaseSettings):
                     "OIDC_ISSUER and OIDC_JWKS_URL are required when "
                     "AUTH_MODE=oidc"
                 )
+            # 生产不能把浏览器 Origin / Host 校验交给通配符。
+            if "*" in self.cors_origins:
+                raise ValueError(
+                    "CORS_ORIGINS must not contain '*' in production"
+                )
+            if "*" in self.trusted_hosts:
+                raise ValueError(
+                    "TRUSTED_HOSTS must not contain '*' in production"
+                )
+            if self.model_mode == "live" and not _secret(
+                self.deepseek_api_key
+            ):
+                raise ValueError(
+                    "DEEPSEEK_API_KEY is required when MODEL_MODE=live"
+                )
         return self
+
+
+def _secret(value: SecretStr | None) -> str | None:
+    """统一读取 SecretStr；空值视为未配置。"""
+    if value is None:
+        return None
+    secret = value.get_secret_value()
+    return secret or None

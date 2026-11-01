@@ -5,6 +5,7 @@ M1 只实现 start_turn，M2 增加 interrupt/resume，M4 增加审批与下单�
 """
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
@@ -22,6 +23,8 @@ from itinerary_agent.domain.models import (
 )
 from itinerary_agent.orchestration.graph import build_graph
 from itinerary_agent.orchestration.state import initial_state
+
+logger = logging.getLogger(__name__)
 
 
 def apply_amendment(state: dict, request: TripRequest) -> dict:
@@ -90,10 +93,16 @@ class OrchestrationService:
         return self.traces.span(name, layer, **attrs)
 
     def ctx_of(self, state: dict) -> RequestContext:
-        """从图状态重建网关上下文；角色权限在 M2 由真实用户档案补齐。"""
+        """从图状态重建网关上下文。
+
+        角色/scope 在 start_turn 时固化进 Checkpoint；旧 Checkpoint
+        没有这两个字段时按最低业务角色（employee）处理。
+        """
+        roles = list(state.get("roles") or ["employee"])
         return RequestContext(
             trace_id=state["trace_id"], tenant_id=state["tenant_id"],
-            user_id=state["user_id"], session_id=state["session_id"], roles=[],
+            user_id=state["user_id"], session_id=state["session_id"],
+            roles=roles, scopes=list(state.get("scopes") or []),
         )
 
     async def _upsert_task(self, state: dict, status: str) -> None:
@@ -115,6 +124,7 @@ class OrchestrationService:
         """在编排层统一做动作准入，再交给工具层执行。
 
         guard 放在这里而不是 ToolService，避免工具层反向依赖控制层。
+        所有拒绝和高风险写操作都落审计；审计失败只记日志，不改变业务结果。
         """
         if self.control is not None:
             result = state.get("policy_result") or {}
@@ -130,11 +140,48 @@ class OrchestrationService:
             )
             guard = self.control.guard(self.ctx_of(state), action, snapshot)
             if not guard.allowed:
+                await self._audit(
+                    state, action, args, "denied",
+                    f"{guard.code}: {guard.message}",
+                )
                 return ToolResult(
                     ok=False, trace_id=state["trace_id"],
                     error=ToolError(code=guard.code, message=guard.message),
                 )
-        return await self.tools.invoke(self.ctx_of(state), name, args)
+
+        tool_result = await self.tools.invoke(self.ctx_of(state), name, args)
+        if action.startswith("book_") or action == "submit_approval":
+            replayed = bool(
+                tool_result.ok
+                and (tool_result.data or {}).get("replayed")
+            )
+            decision = (
+                "replayed" if replayed
+                else "allowed" if tool_result.ok
+                else "failed"
+            )
+            reason = (
+                "idempotent replay" if replayed
+                else "tool success" if tool_result.ok
+                else (tool_result.error.code if tool_result.error else "failed")
+            )
+            await self._audit(state, action, args, decision, reason)
+        return tool_result
+
+    async def _audit(self, state: dict, action: str, inputs: dict,
+                     decision: str, reason: str) -> None:
+        """写审计；审计不可用时降级为日志，不能阻断主流程。"""
+        if self.audit is None:
+            return
+        try:
+            await self.audit.record(
+                state["trace_id"], state["task_id"], state["user_id"],
+                action, inputs, list(state.get("policy_refs") or []),
+                getattr(self.rules, "version", "") if self.rules else "",
+                decision, reason,
+            )
+        except Exception:
+            logger.exception("audit write failed: %s", action)
 
     async def get_user_profile(self, state: dict) -> UserProfile:
         result = await self.tools.invoke(self.ctx_of(state), "get_user_profile", {})

@@ -32,4 +32,18 @@ fi
 export LANGFUSE_AUTH="$(printf '%s:%s' "$PUB" "$SEC" | base64 | tr -d '\n')"
 export OTEL_ENABLED="${OTEL_ENABLED:-true}"
 
-exec docker compose --profile core --profile observability up -d "$@"
+docker compose --profile core --profile observability up -d "$@"
+
+# 共享 Prometheus 在 monitoring-stack_monitoring 网络里；api/worker 默认只在
+# 项目网络。重新创建容器后网络连接会丢失，这里幂等补连，保证指标可抓取。
+for service in api worker; do
+  cid="$(docker compose --profile core ps -q "$service" 2>/dev/null || true)"
+  [ -n "$cid" ] || continue
+  if ! docker inspect "$cid" \
+      --format '{{range $k,$v := .NetworkSettings.Networks}}{{println $k}}{{end}}' \
+      | grep -qx 'monitoring-stack_monitoring'; then
+    # 共享网络上必须保留服务别名，Prometheus 才能用 api:8000 抓取。
+    docker network connect --alias "$service" \
+      monitoring-stack_monitoring "$cid"
+  fi
+done

@@ -5,6 +5,8 @@ Controller 只做三件事：解析 HTTP/SSE、构造 RequestContext、调用应
 这一层不直接访问数据库，也不写查询语句。
 """
 
+import asyncio
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Request
@@ -15,8 +17,11 @@ from sse_starlette.sse import EventSourceResponse
 from itinerary_agent.api.context import build_context
 from itinerary_agent.api.pii import scrub
 from itinerary_agent.api.sse import to_sse
-from itinerary_agent.domain.models import Decision
+from itinerary_agent.application.access import require_scope
+from itinerary_agent.domain.models import Decision, Event
 from itinerary_agent.observability.metrics import SSE_CONNECTIONS
+
+logger = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):
@@ -60,58 +65,84 @@ def build_router(container) -> APIRouter:
     """
     router = APIRouter()
 
+    def stream(source, route: str, trace_id: str) -> EventSourceResponse:
+        """统一 SSE：心跳、断连取消、按轮超时和结构化错误事件。"""
+
+        async def events():
+            SSE_CONNECTIONS.inc()
+            try:
+                async with container.traces.span(
+                    "gateway.http", "gateway", route=route
+                ):
+                    timeout = container.settings.chat_turn_timeout_seconds
+                    if timeout and timeout > 0:
+                        async with asyncio.timeout(timeout):
+                            async for event in source:
+                                yield to_sse(event)
+                    else:
+                        async for event in source:
+                            yield to_sse(event)
+            except TimeoutError:
+                yield to_sse(Event(type="error", data={
+                    "trace_id": trace_id,
+                    "code": "TURN_TIMEOUT",
+                    "message": "本轮执行超时，请稍后重试。",
+                }))
+            except asyncio.CancelledError:
+                # 客户端断连由 sse-starlette/ASGI 取消生成器；不要吞掉。
+                raise
+            except Exception:
+                logger.exception("SSE stream failed")
+                yield to_sse(Event(type="error", data={
+                    "trace_id": trace_id,
+                    "code": "STREAM_FAILED",
+                    "message": "服务暂时不可用，请稍后重试。",
+                }))
+            finally:
+                SSE_CONNECTIONS.dec()
+
+        return EventSourceResponse(
+            events(),
+            ping=container.settings.sse_ping_seconds,
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     # 对话入口：只做上下文、脱敏和 SSE，不持有业务状态。
     @router.post("/chat")
     async def chat(payload: ChatRequest, request: Request):
         # 请求体里的 session_id 优先级高于请求头；trace 由网关生成或透传。
         ctx = build_context(request, session_id=payload.session_id)
+        require_scope(ctx, "chat")
         container.traces.start_trace(ctx.trace_id)
-
-        async def events():
-            SSE_CONNECTIONS.inc()
-            try:
-                async with container.traces.span(
-                    "gateway.http", "gateway", route="/chat"
-                ):
-                    async for event in container.orchestrator.start_turn(
-                        ctx, scrub(payload.message)
-                    ):
-                        yield to_sse(event)
-            finally:
-                SSE_CONNECTIONS.dec()
-
-        return EventSourceResponse(events())
+        return stream(
+            container.orchestrator.start_turn(ctx, scrub(payload.message)),
+            "/chat", ctx.trace_id,
+        )
 
     # 人工恢复：复用任务 trace，并把用户决策转成图恢复 payload。
     @router.post("/tasks/{task_id}/resume")
     async def resume(task_id: str, decision: Decision, request: Request):
         # 恢复接口复用任务首次请求的 trace，保证流转图和回放是同一条链。
+        # 先确认任务归属，避免同租户其他用户恢复别人的任务。
         ctx = build_context(request)
-        trace_id = await container.task_queries.get_trace_id(task_id)
+        trace_id = await container.task_queries.authorize_resume(ctx, task_id)
         if trace_id:
             ctx.trace_id = trace_id
         container.traces.start_trace(ctx.trace_id)
-
-        async def events():
-            SSE_CONNECTIONS.inc()
-            try:
-                async with container.traces.span(
-                    "gateway.http", "gateway", route="/tasks/resume"
-                ):
-                    async for event in container.orchestrator.resume(
-                        ctx, task_id, decision
-                    ):
-                        yield to_sse(event)
-            finally:
-                SSE_CONNECTIONS.dec()
-
-        return EventSourceResponse(events())
+        return stream(
+            container.orchestrator.resume(ctx, task_id, decision),
+            "/tasks/resume", ctx.trace_id,
+        )
 
     # 观测：任务聚合与按 task 查看 trace。
     @router.get("/tasks/summary")
-    async def task_summaries(request: Request, limit: int = 50):
+    async def task_summaries(request: Request, limit: int = 50,
+                             cursor: str | None = None):
         return await container.trace_queries.list_task_summaries(
-            build_context(request), limit
+            build_context(request), limit, cursor
         )
 
     @router.get("/tasks/{task_id}/traces")
@@ -126,9 +157,10 @@ def build_router(container) -> APIRouter:
 
     # 会话记录：审批人看本租户全部，员工只看自己。
     @router.get("/conversations")
-    async def conversations(request: Request, limit: int = 100):
+    async def conversations(request: Request, limit: int = 100,
+                            cursor: str | None = None):
         return await container.conversation_queries.list_conversations(
-            build_context(request), limit
+            build_context(request), limit, cursor
         )
 
     @router.get("/conversations/{session_id}")
@@ -144,17 +176,19 @@ def build_router(container) -> APIRouter:
         )
 
     @router.get("/sessions")
-    async def sessions(request: Request, limit: int = 50):
+    async def sessions(request: Request, limit: int = 50,
+                       cursor: str | None = None):
         return await container.conversation_queries.list_sessions(
-            build_context(request), limit
+            build_context(request), limit, cursor
         )
 
     @router.get("/sessions/{session_id}/messages")
-    async def session_messages(session_id: str, limit: int = 100):
+    async def session_messages(session_id: str, request: Request,
+                               limit: int = 100):
         return {
             "session_id": session_id,
             "messages": await container.conversation_queries.messages(
-                session_id, limit
+                build_context(request), session_id, limit
             ),
         }
 
@@ -178,9 +212,9 @@ def build_router(container) -> APIRouter:
     # 审批工作台：待办、详情和通过/驳回。
     @router.get("/approvals")
     async def approvals(request: Request, status: str = "pending",
-                        limit: int = 50):
+                        limit: int = 50, cursor: str | None = None):
         return await container.approval_queries.list_approvals(
-            build_context(request), status, limit
+            build_context(request), status, limit, cursor
         )
 
     @router.get("/approvals/{approval_id}")
@@ -218,9 +252,9 @@ def build_router(container) -> APIRouter:
 
     @router.get("/badcases")
     async def list_badcases(request: Request, status: str | None = None,
-                            limit: int = 50):
+                            limit: int = 50, cursor: str | None = None):
         return await container.feedback_service.list_badcases(
-            build_context(request), status, limit
+            build_context(request), status, limit, cursor
         )
 
     @router.patch("/badcases/{badcase_id}")
@@ -233,15 +267,16 @@ def build_router(container) -> APIRouter:
 
     # Trace 回放与流转图。
     @router.get("/traces")
-    async def traces(request: Request, limit: int = 50):
+    async def traces(request: Request, limit: int = 50,
+                     cursor: str | None = None):
         return await container.trace_queries.list_traces(
-            build_context(request), limit
+            build_context(request), limit, cursor
         )
 
     @router.get("/traces/overview")
-    async def traces_overview():
+    async def traces_overview(request: Request):
         # 固定路径必须放在 /traces/{trace_id} 之前。
-        return await container.trace_queries.overview()
+        return await container.trace_queries.overview(build_context(request))
 
     @router.get("/traces/{trace_id}/flow")
     async def trace_flow(trace_id: str, request: Request):

@@ -30,7 +30,7 @@ def create_identity_app(settings: Settings) -> FastAPI:
         user = MOCK_USERS.get(payload.user)
         if user is None:
             raise HTTPException(status_code=404, detail="unknown user")
-        if not settings.jwt_secret:
+        if settings.jwt_secret is None:
             raise HTTPException(
                 status_code=503, detail="JWT_SECRET is not configured"
             )
@@ -48,7 +48,9 @@ def create_identity_app(settings: Settings) -> FastAPI:
         }
         return {
             "access_token": jwt.encode(
-                claims, settings.jwt_secret, algorithm="HS256"
+                claims,
+                settings.jwt_secret.get_secret_value(),
+                algorithm="HS256",
             ),
             "token_type": "bearer",
             "expires_in": 3600,

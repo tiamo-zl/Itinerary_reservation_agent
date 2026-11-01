@@ -96,6 +96,13 @@ async def test_admin_decision_writes_outbox_and_relay_resumes(tmp_path):
     )
     await container.approval_queries.decide(admin, approval_id, "approved", "")
 
+    # 审批决定必须落审计，且与 outbox 同事务提交。
+    audit_row = await container.db.fetchone(
+        "SELECT action, decision FROM audit_log "
+        "WHERE action = 'approval.decide' ORDER BY created_at DESC LIMIT 1"
+    )
+    assert audit_row["decision"] == "approved"
+
     relay = OutboxRelay(
         container.outbox_repo, container.task_repo, container.orchestrator
     )

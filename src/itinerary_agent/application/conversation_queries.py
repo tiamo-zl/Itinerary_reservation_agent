@@ -7,8 +7,17 @@
 
 from __future__ import annotations
 
-from itinerary_agent.application.access import is_admin, require_found
+from itinerary_agent.application.access import (
+    is_admin,
+    require_found,
+    require_scope,
+)
 from itinerary_agent.application.errors import Forbidden
+from itinerary_agent.application.pagination import (
+    build_page,
+    decode_cursor,
+    normalize_limit,
+)
 from itinerary_agent.application.ports import (
     ConversationRepositoryPort,
     OrchestrationPort,
@@ -23,24 +32,44 @@ class ConversationQueryService:
         self.orchestration = orchestration
 
     async def list_conversations(self, ctx: RequestContext,
-                                  limit: int = 100) -> dict:
-        return {
-            "conversations": await self.conversation_repo.list_conversations(
-                admin=is_admin(ctx),
-                user_id=ctx.user_id,
-                tenant_id=ctx.tenant_id,
-                limit=limit,
-            )
-        }
+                                  limit: int = 100,
+                                  cursor: str | None = None) -> dict:
+        require_scope(ctx, "conversation:read")
+        page_size = normalize_limit(limit, default=100)
+        rows = await self.conversation_repo.list_conversations(
+            admin=is_admin(ctx),
+            user_id=ctx.user_id,
+            tenant_id=ctx.tenant_id,
+            limit=page_size,
+            cursor=decode_cursor(cursor),
+        )
+        items, next_cursor = build_page(
+            rows, page_size,
+            lambda item: {
+                "updated_at": item["updated_at"],
+                "session_id": item["session_id"],
+            },
+        )
+        return {"conversations": items, "next_cursor": next_cursor}
 
-    async def list_sessions(self, ctx: RequestContext, limit: int = 50) -> dict:
-        return {
-            "sessions": await self.conversation_repo.list_sessions(
-                user_id=ctx.user_id,
-                tenant_id=ctx.tenant_id,
-                limit=limit,
-            )
-        }
+    async def list_sessions(self, ctx: RequestContext, limit: int = 50,
+                            cursor: str | None = None) -> dict:
+        require_scope(ctx, "conversation:read")
+        page_size = normalize_limit(limit)
+        rows = await self.conversation_repo.list_sessions(
+            user_id=ctx.user_id,
+            tenant_id=ctx.tenant_id,
+            limit=page_size,
+            cursor=decode_cursor(cursor),
+        )
+        items, next_cursor = build_page(
+            rows, page_size,
+            lambda item: {
+                "updated_at": item["updated_at"],
+                "session_id": item["session_id"],
+            },
+        )
+        return {"sessions": items, "next_cursor": next_cursor}
 
     async def detail(self, ctx: RequestContext, session_id: str) -> dict:
         """会话详情：任务、消息和最新任务的当前进展。
@@ -52,6 +81,7 @@ class ConversationQueryService:
         4. 取最新任务的 Checkpoint 当前状态，缺失时允许为 None；
         5. 组合消息与任务列表返回。
         """
+        require_scope(ctx, "conversation:read")
         # 步骤 1-2：会话必须至少有一个任务。
         tasks = await self.conversation_repo.list_tasks(session_id)
         require_found(tasks, "session")
@@ -81,10 +111,20 @@ class ConversationQueryService:
             "latest_state": latest_state,
         }
 
-    async def messages(self, session_id: str, limit: int = 100) -> list[dict]:
-        """会话消息；Trace/流转图会按 trace 反查会话后再读取。
+    async def messages(self, ctx: RequestContext, session_id: str,
+                       limit: int = 100) -> list[dict]:
+        """会话消息；员工只能读自己参与过的会话。
 
-        这里保持只读且无副作用，归属校验由调用方页面决定；
-        生产接入真实鉴权后应改为按 ctx 校验。
+        Trace/流转图按 trace 反查会话后也走这里，因此归属校验必须
+        放在应用服务，而不是依赖前端页面。
         """
+        require_scope(ctx, "conversation:read")
+        tasks = await self.conversation_repo.list_tasks(session_id)
+        require_found(tasks, "session")
+        if not is_admin(ctx) and any(
+            task["tenant_id"] != ctx.tenant_id
+            or task["user_id"] != ctx.user_id
+            for task in tasks
+        ):
+            raise Forbidden("forbidden")
         return await self.orchestration.get_messages(session_id, limit)

@@ -75,6 +75,27 @@ def test_jwt_rejects_expired_token(tmp_path):
     assert response.status_code == 401
 
 
+def test_jwt_scope_is_enforced(tmp_path):
+    app = _jwt_app()
+    # token 只授予 chat，不能读取会话列表。
+    token = _token(roles=["employee"], scopes=["chat"])
+    with TestClient(app) as client:
+        response = client.get(
+            "/conversations",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert response.status_code == 403
+
+
+def test_production_rejects_wildcard_cors():
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None, environment="prod", auth_mode="jwt",
+            jwt_secret=JWT_SECRET, cors_origins=["*"],
+            trusted_hosts=["itinerary.example.com"],
+        )
+
+
 def test_jwt_rejects_wrong_issuer(tmp_path):
     app = _jwt_app()
     with TestClient(app) as client:

@@ -2,8 +2,7 @@
 
 from itinerary_agent.application.errors import Forbidden, NotFound
 from itinerary_agent.domain.models import RequestContext
-
-ADMIN_ROLES = {"admin", "approver"}
+from itinerary_agent.security.scopes import ADMIN_ROLES, has_scope
 
 
 def is_admin(ctx: RequestContext) -> bool:
@@ -12,6 +11,12 @@ def is_admin(ctx: RequestContext) -> bool:
 
 def require_admin(ctx: RequestContext) -> None:
     if not is_admin(ctx):
+        raise Forbidden("forbidden")
+
+
+def require_scope(ctx: RequestContext, scope: str) -> None:
+    """scope 是接口/工具的最小授权单位；管理员按角色补齐。"""
+    if not has_scope(ctx, scope):
         raise Forbidden("forbidden")
 
 

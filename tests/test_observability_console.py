@@ -22,30 +22,35 @@ async def test_trace_and_badcase_apis(tmp_path):
         trace_id = status["trace_id"]
         assert trace_id
 
-        task = client.get(f"/tasks/{task_id}").json()
+        admin = {"X-Mock-User": "u002"}
+        task = client.get(f"/tasks/{task_id}", headers=admin).json()
         assert task["trace_id"] == trace_id
 
         # 状态级回放：Checkpoint 历史应包含至少一个快照。
-        history = client.get(f"/tasks/{task_id}/history").json()
+        history = client.get(
+            f"/tasks/{task_id}/history", headers=admin
+        ).json()
         assert history["history"]
 
-        traces = client.get("/traces").json()["traces"]
+        traces = client.get("/traces", headers=admin).json()["traces"]
         assert any(item["trace_id"] == trace_id for item in traces)
 
-        task_summary = client.get("/tasks/summary").json()["tasks"]
+        task_summary = client.get("/tasks/summary", headers=admin).json()["tasks"]
         summary = next(item for item in task_summary if item["task_id"] == task_id)
         assert summary["trace_count"] >= 1
         assert summary["span_count"] > 0
 
-        task_traces = client.get(f"/tasks/{task_id}/traces").json()["traces"]
+        task_traces = client.get(
+            f"/tasks/{task_id}/traces", headers=admin
+        ).json()["traces"]
         assert task_traces[0]["trace_id"] == trace_id
         assert task_traces[0]["span_count"] > 0
 
-        overview = client.get("/traces/overview").json()
+        overview = client.get("/traces/overview", headers=admin).json()
         assert overview["totals"]["traces"] >= 1
         assert overview["layers"]
 
-        detail = client.get(f"/traces/{trace_id}").json()
+        detail = client.get(f"/traces/{trace_id}", headers=admin).json()
         assert detail["task_id"] == task_id
         assert detail["spans"]
 

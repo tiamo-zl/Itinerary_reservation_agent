@@ -10,6 +10,7 @@ from uuid import uuid4
 from fastapi import Request
 
 from itinerary_agent.domain.models import RequestContext
+from itinerary_agent.security.scopes import scopes_for_roles
 
 MOCK_USERS = {
     "u001": {"tenant_id": "demo-company", "roles": ["employee"]},
@@ -17,28 +18,7 @@ MOCK_USERS = {
     "u003": {"tenant_id": "other-company", "roles": ["employee"]},
 }
 
-# mock 模式从角色推导 scopes；真实 OIDC 由 token 的 scopes claim 决定。
-ROLE_SCOPES = {
-    "employee": {
-        "chat", "task:read", "conversation:read",
-        "trace:read", "feedback:write",
-    },
-    "approver": {"approval:read", "approval:decide", "badcase:manage"},
-    "admin": {
-        "chat", "task:read", "conversation:read", "trace:read",
-        "feedback:write", "approval:read", "approval:decide",
-        "badcase:manage", "admin",
-    },
-}
-
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
-
-
-def scopes_for_roles(roles: list[str]) -> list[str]:
-    scopes: set[str] = set()
-    for role in roles:
-        scopes.update(ROLE_SCOPES.get(role, set()))
-    return sorted(scopes)
 
 
 def request_id_of(request: Request) -> str:

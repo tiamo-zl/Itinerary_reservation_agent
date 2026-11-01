@@ -9,7 +9,13 @@ import json
 from itinerary_agent.application.access import (
     require_admin,
     require_found,
+    require_scope,
     require_task_access,
+)
+from itinerary_agent.application.pagination import (
+    build_page,
+    decode_cursor,
+    normalize_limit,
 )
 from itinerary_agent.application.ports import (
     ApprovalRepositoryPort,
@@ -28,22 +34,40 @@ class ApprovalQueryService:
                  orchestration: OrchestrationPort,
                  approval_system: ApprovalSystemPort,
                  outbox: OutboxRepositoryPort,
-                 unit_of_work: UnitOfWorkPort):
+                 unit_of_work: UnitOfWorkPort,
+                 audit=None):
         self.approval_repo = approval_repo
         self.task_repo = task_repo
         self.orchestration = orchestration
         self.approval_system = approval_system
         self.outbox = outbox
         self.unit_of_work = unit_of_work
+        self.audit = audit
 
     async def list_approvals(self, ctx: RequestContext,
                              status: str = "pending",
-                             limit: int = 50) -> dict:
+                             limit: int = 50,
+                             cursor: str | None = None) -> dict:
+        require_scope(ctx, "approval:read")
         require_admin(ctx)
-        rows = await self.approval_repo.list_by_status(status, limit)
-        return {"approvals": [await self._to_item(row) for row in rows]}
+        page_size = normalize_limit(limit)
+        rows = await self.approval_repo.list_by_status(
+            status, page_size, decode_cursor(cursor)
+        )
+        rows, next_cursor = build_page(
+            rows, page_size,
+            lambda row: {
+                "created_at": row["created_at"],
+                "approval_id": row["approval_id"],
+            },
+        )
+        return {
+            "approvals": [await self._to_item(row) for row in rows],
+            "next_cursor": next_cursor,
+        }
 
     async def get(self, ctx: RequestContext, approval_id: str) -> dict:
+        require_scope(ctx, "approval:read")
         require_admin(ctx)
         row = require_found(
             await self.approval_repo.get(approval_id), "approval"
@@ -52,6 +76,7 @@ class ApprovalQueryService:
 
     async def list_for_task(self, ctx: RequestContext, task_id: str) -> dict:
         """任务关联的审批单；员工本人和审批人都能看。"""
+        require_scope(ctx, "task:read")
         task = require_found(await self.task_repo.get(task_id), "task")
         require_task_access(ctx, task)
         rows = await self.approval_repo.list_for_task(task_id)
@@ -67,6 +92,7 @@ class ApprovalQueryService:
         3. 同一事务内更新审批状态并写 outbox 事件；
         4. worker 异步领取事件并从 Checkpoint 恢复任务。
         """
+        require_scope(ctx, "approval:decide")
         require_admin(ctx)
         approval = require_found(
             await self.approval_repo.get(approval_id), "approval"
@@ -77,6 +103,16 @@ class ApprovalQueryService:
 
         async with self.unit_of_work.transaction():
             await self.approval_system.decide(approval_id, decision, comment)
+            if self.audit is not None:
+                # 审批决定与 outbox 同事务；审计失败不吞掉决定本身，
+                # 但同一事务回滚可以保证不会出现“已决定、无审计”。
+                await self.audit.record(
+                    ctx.trace_id, task["task_id"], ctx.user_id,
+                    "approval.decide",
+                    {"approval_id": approval_id, "status": decision,
+                     "comment": comment},
+                    [], "", decision, comment or "approval decision",
+                )
             await self.outbox.enqueue(
                 aggregate_type="approval",
                 aggregate_id=approval_id,

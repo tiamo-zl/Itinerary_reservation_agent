@@ -70,9 +70,11 @@ class AuthService:
     async def _decode(self, token: str) -> dict:
         try:
             if self.settings.auth_mode == "jwt":
+                if self.settings.jwt_secret is None:
+                    raise AuthError("JWT secret is not configured")
                 return jwt.decode(
                     token,
-                    self.settings.jwt_secret,
+                    self.settings.jwt_secret.get_secret_value(),
                     algorithms=["HS256"],
                     audience=self.settings.jwt_audience,
                     issuer=self.settings.jwt_issuer,

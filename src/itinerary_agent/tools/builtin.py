@@ -10,6 +10,8 @@ SEARCH_FLIGHTS = ToolSpec(
     description="查询航班",
     side_effect="read",
     risk="low",
+    required_scopes=["chat"],
+    timeout_ms=3000,
     input_schema={
         "type": "object",
         "properties": {
@@ -19,7 +21,23 @@ SEARCH_FLIGHTS = ToolSpec(
         },
         "required": ["origin", "destination", "date"],
     },
-    output_schema={"type": "object"},
+    output_schema={
+        "type": "object",
+        "properties": {
+            "flights": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "option_id": {"type": "string"},
+                        "price": {"type": "number"},
+                    },
+                    "required": ["option_id", "price"],
+                },
+            }
+        },
+        "required": ["flights"],
+    },
 )
 
 SEARCH_HOTELS = ToolSpec(
@@ -27,6 +45,8 @@ SEARCH_HOTELS = ToolSpec(
     description="查询酒店",
     side_effect="read",
     risk="low",
+    required_scopes=["chat"],
+    timeout_ms=3000,
     input_schema={
         "type": "object",
         "properties": {
@@ -37,7 +57,23 @@ SEARCH_HOTELS = ToolSpec(
         },
         "required": ["city", "check_in", "check_out"],
     },
-    output_schema={"type": "object"},
+    output_schema={
+        "type": "object",
+        "properties": {
+            "hotels": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "option_id": {"type": "string"},
+                        "price_per_night": {"type": "number"},
+                    },
+                    "required": ["option_id", "price_per_night"],
+                },
+            }
+        },
+        "required": ["hotels"],
+    },
 )
 
 GET_USER = ToolSpec(
@@ -45,8 +81,17 @@ GET_USER = ToolSpec(
     description="获取用户职级与部门",
     side_effect="read",
     risk="low",
+    required_scopes=["chat"],
+    timeout_ms=2000,
     input_schema={"type": "object", "properties": {}},
-    output_schema={"type": "object"},
+    output_schema={
+        "type": "object",
+        "properties": {
+            "user_id": {"type": "string"},
+            "employee_level": {"type": "string"},
+        },
+        "required": ["user_id", "employee_level"],
+    },
 )
 
 
@@ -55,6 +100,8 @@ SUBMIT_APPROVAL = ToolSpec(
     description="提交差旅审批",
     side_effect="write",
     risk="high",
+    required_scopes=["chat"],
+    timeout_ms=8000,
     input_schema={
         "type": "object",
         "properties": {
@@ -64,7 +111,14 @@ SUBMIT_APPROVAL = ToolSpec(
         },
         "required": ["task_id", "revision", "payload"],
     },
-    output_schema={"type": "object"},
+    output_schema={
+        "type": "object",
+        "properties": {
+            "approval_id": {"type": "string"},
+            "status": {"type": "string"},
+        },
+        "required": ["approval_id", "status"],
+    },
 )
 
 GET_APPROVAL = ToolSpec(
@@ -72,12 +126,21 @@ GET_APPROVAL = ToolSpec(
     description="查询审批状态",
     side_effect="read",
     risk="low",
+    required_scopes=["chat"],
+    timeout_ms=3000,
     input_schema={
         "type": "object",
         "properties": {"approval_id": {"type": "string"}},
         "required": ["approval_id"],
     },
-    output_schema={"type": "object"},
+    output_schema={
+        "type": "object",
+        "properties": {
+            "approval_id": {"type": "string"},
+            "status": {"type": "string"},
+        },
+        "required": ["approval_id", "status"],
+    },
 )
 
 
@@ -86,6 +149,8 @@ BOOK_FLIGHT = ToolSpec(
     description="预订机票",
     side_effect="write",
     risk="high",
+    required_scopes=["chat"],
+    timeout_ms=8000,
     input_schema={
         "type": "object",
         "properties": {
@@ -94,7 +159,15 @@ BOOK_FLIGHT = ToolSpec(
         },
         "required": ["option_id", "idempotency_key"],
     },
-    output_schema={"type": "object"},
+    output_schema={
+        "type": "object",
+        "properties": {
+            "booking_id": {"type": "string"},
+            "status": {"type": "string"},
+            "replayed": {"type": "boolean"},
+        },
+        "required": ["booking_id", "status"],
+    },
 )
 
 BOOK_HOTEL = ToolSpec(
@@ -102,6 +175,8 @@ BOOK_HOTEL = ToolSpec(
     description="预订酒店",
     side_effect="write",
     risk="high",
+    required_scopes=["chat"],
+    timeout_ms=8000,
     input_schema={
         "type": "object",
         "properties": {
@@ -110,7 +185,15 @@ BOOK_HOTEL = ToolSpec(
         },
         "required": ["option_id", "idempotency_key"],
     },
-    output_schema={"type": "object"},
+    output_schema={
+        "type": "object",
+        "properties": {
+            "booking_id": {"type": "string"},
+            "status": {"type": "string"},
+            "replayed": {"type": "boolean"},
+        },
+        "required": ["booking_id", "status"],
+    },
 )
 
 

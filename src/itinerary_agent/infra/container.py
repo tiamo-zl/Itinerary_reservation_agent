@@ -57,6 +57,7 @@ class Container:
     span_repo: object | None = None
     model_call_repo: object | None = None
     outbox_relay: object | None = None
+    retention_worker: object | None = None
     task_queries: object | None = None
     trace_queries: object | None = None
     conversation_queries: object | None = None
@@ -197,8 +198,21 @@ class Container:
                     self.approvals, self.orchestrator,
                 )
                 self.poller.start()
+            # 保留清理只处理投影/缓存/已结束事件，不删除业务状态。
+            if self.settings.retention_enabled and self.retention_worker is None:
+                from itinerary_agent.workers.retention import RetentionWorker
+
+                self.retention_worker = RetentionWorker(
+                    self.span_repo, self.outbox_repo, self.llm_cache,
+                    self.idempotency_repo, self.settings,
+                    self.settings.retention_interval_seconds,
+                )
+                self.retention_worker.start()
 
     async def stop(self) -> None:
+        if self.retention_worker is not None:
+            await self.retention_worker.stop()
+            self.retention_worker = None
         if self.outbox_relay is not None:
             await self.outbox_relay.stop()
             self.outbox_relay = None
@@ -390,7 +404,7 @@ class Container:
         # 步骤 3：审批查询 + 决策。
         self.approval_queries = self.approval_queries or ApprovalQueryService(
             self.approval_repo, self.task_repo, self.orchestrator,
-            self.approvals, self.outbox_repo, self.db,
+            self.approvals, self.outbox_repo, self.db, self.audit,
         )
         from itinerary_agent.infra.rate_limit import RateLimiter
 

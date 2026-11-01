@@ -23,3 +23,11 @@ class PostgresSpanRepository:
                 json.dumps(attributes, ensure_ascii=False, default=str),
             ),
         )
+
+    async def delete_older_than(self, days: int) -> int:
+        """保留策略：删除超过保留期的 span 投影。"""
+        return await self.db.execute(
+            "DELETE FROM spans "
+            "WHERE start_time < now() - (? * interval '1 day')",
+            (days,),
+        )

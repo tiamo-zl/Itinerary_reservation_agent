@@ -34,7 +34,18 @@ curl -fsS http://127.0.0.1:8000/metrics | head
 ```
 
 `/readyz` must report `database`, `redis` and `checkpointer` as `ok`; the
-worker additionally checks `outbox_relay`.
+worker additionally checks `outbox_relay` and `retention`.
+
+Retention defaults (configurable through `.env`):
+
+| Setting | Default | Deletes |
+|---|---|---|
+| `TRACE_RETENTION_DAYS` | 7 | span projection |
+| `OUTBOX_RETENTION_DAYS` | 30 | `done`/`dead` outbox rows |
+| `IDEMPOTENCY_RETENTION_DAYS` | 7 | idempotency keys |
+| `RETENTION_INTERVAL_SECONDS` | 3600 | run interval |
+
+Set `RETENTION_ENABLED=false` to disable the worker.
 
 ## Update
 

@@ -5,7 +5,15 @@ parent_span_id 还原调用树。概览聚合直接查 PostgreSQL，demo 足够�
 生产应换成 Prometheus/ClickHouse 等时序或分析存储。
 """
 
+from datetime import datetime
+
 from itinerary_agent.infra.db import Database
+
+
+def _as_datetime(value) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value))
 
 
 class PostgresTraceRepository:
@@ -43,14 +51,25 @@ class PostgresTraceRepository:
         return [dict(row) for row in rows]
 
     async def list_traces(self, limit: int = 50,
-                          tenant_id: str | None = None) -> list[dict]:
-        """最近的 trace 汇总；tenant_id 为空表示管理员/控制台全量视图。"""
+                          tenant_id: str | None = None,
+                          cursor: dict | None = None) -> list[dict]:
+        """最近的 trace 汇总；tenant_id 为空表示管理员/控制台全量视图。
+
+        keyset 排序键是 (started_at, trace_id)，都用 DESC；
+        多取 limit+1 条由应用层判断是否还有下一页。
+        """
         where = ""
         params: list = []
         if tenant_id is not None:
             # 没有关联任务的 trace（后台/检索）不携带租户信息，保留可见。
             where = "WHERE (t.tenant_id = ? OR t.tenant_id IS NULL)"
             params.append(tenant_id)
+        having = ""
+        if cursor:
+            having = "HAVING (MIN(s.start_time), s.trace_id) < (?, ?)"
+            params.extend([
+                _as_datetime(cursor["started_at"]), cursor["trace_id"],
+            ])
         rows = await self.db.fetchall(
             "SELECT s.trace_id, MIN(s.start_time) AS started_at, "
             "COUNT(*) AS span_count, "
@@ -60,8 +79,9 @@ class PostgresTraceRepository:
             "MAX(t.task_id) AS task_id, MAX(t.status) AS task_status, "
             "MAX(t.tenant_id) AS tenant_id "
             "FROM spans s LEFT JOIN tasks t ON t.trace_id = s.trace_id "
-            f"{where} GROUP BY s.trace_id ORDER BY started_at DESC LIMIT ?",
-            (*params, limit),
+            f"{where} GROUP BY s.trace_id {having} "
+            "ORDER BY MIN(s.start_time) DESC, s.trace_id DESC LIMIT ?",
+            (*params, limit + 1),
         )
         traces = []
         for row in rows:
@@ -71,13 +91,20 @@ class PostgresTraceRepository:
         return traces
 
     async def list_task_summaries(self, limit: int = 50,
-                                  tenant_id: str | None = None) -> list[dict]:
+                                  tenant_id: str | None = None,
+                                  cursor: dict | None = None) -> list[dict]:
         """按 task 聚合 trace，供概览页先选 task 再查看 trace。"""
-        where = ""
+        conditions: list[str] = []
         params: list = []
         if tenant_id is not None:
-            where = "WHERE t.tenant_id = ?"
+            conditions.append("t.tenant_id = ?")
             params.append(tenant_id)
+        if cursor:
+            conditions.append("(t.updated_at, t.task_id) < (?, ?)")
+            params.extend([
+                _as_datetime(cursor["updated_at"]), cursor["task_id"],
+            ])
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = await self.db.fetchall(
             "SELECT t.task_id, t.user_id, t.tenant_id, t.status, t.revision, "
             "t.trace_id, t.updated_at, "
@@ -90,8 +117,9 @@ class PostgresTraceRepository:
             "(SELECT MAX(s.start_time) FROM spans s "
             " WHERE s.trace_id = t.trace_id "
             " OR s.attributes->>'task_id' = t.task_id) AS last_span_at "
-            f"FROM tasks t {where} ORDER BY t.updated_at DESC LIMIT ?",
-            (*params, limit),
+            f"FROM tasks t {where} "
+            "ORDER BY t.updated_at DESC, t.task_id DESC LIMIT ?",
+            (*params, limit + 1),
         )
         return [dict(row) for row in rows]
 

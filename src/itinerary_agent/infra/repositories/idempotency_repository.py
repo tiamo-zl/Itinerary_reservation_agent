@@ -21,3 +21,11 @@ class PostgresIdempotencyRepository:
             "VALUES (?, ?, ?) ON CONFLICT (key) DO NOTHING",
             (key, result, created_at),
         )
+
+    async def delete_older_than(self, days: int) -> int:
+        """幂等键保留期；删除后旧请求重放会重新执行下单。"""
+        return await self.db.execute(
+            "DELETE FROM idempotency "
+            "WHERE created_at < now() - (? * interval '1 day')",
+            (days,),
+        )

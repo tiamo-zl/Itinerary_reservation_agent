@@ -40,3 +40,15 @@ class PostgresLLMCache:
             )
         except Exception:
             logger.exception("postgres llm cache write failed")
+
+    async def purge_expired(self) -> int:
+        """清理过期缓存；返回被删除的行数。"""
+        deleted = await self.db.execute(
+            "DELETE FROM llm_cache WHERE expires_at IS NOT NULL "
+            "AND expires_at < now()"
+        )
+        deleted += await self.db.execute(
+            "DELETE FROM embedding_cache WHERE expires_at IS NOT NULL "
+            "AND expires_at < now()"
+        )
+        return deleted

@@ -59,11 +59,17 @@ class OpenAIChatGateway:
         self.traces = traces
         self.client = primary_client or AsyncOpenAI(
             base_url=settings.deepseek_base_url,
-            api_key=settings.deepseek_api_key or "missing",
+            api_key=(
+                settings.deepseek_api_key.get_secret_value()
+                if settings.deepseek_api_key else "missing"
+            ),
             timeout=settings.model_timeout_seconds,
             max_retries=settings.model_max_retries,
         )
-        fallback_key = settings.fallback_api_key or settings.dashscope_api_key
+        fallback_secret = settings.fallback_api_key or settings.dashscope_api_key
+        fallback_key = (
+            fallback_secret.get_secret_value() if fallback_secret else None
+        )
         if fallback_client is not None:
             self.fallback_client = fallback_client
         elif settings.model_fallback_enabled and fallback_key:

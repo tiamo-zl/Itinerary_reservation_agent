@@ -15,7 +15,10 @@ class DashScopeEmbedder:
         self.settings = settings
         self.client = AsyncOpenAI(
             base_url=settings.dashscope_base_url,
-            api_key=settings.dashscope_api_key or "missing",
+            api_key=(
+                settings.dashscope_api_key.get_secret_value()
+                if settings.dashscope_api_key else "missing"
+            ),
             timeout=60,
             max_retries=2,
         )

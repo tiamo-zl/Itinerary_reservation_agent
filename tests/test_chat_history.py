@@ -16,7 +16,9 @@ async def test_chat_history_roundtrip(tmp_path):
         task_id = task_id_of(events)
         assert last_event(events, "interrupt")
 
-        first = client.get("/sessions/session-1/messages").json()["messages"]
+        first = client.get(
+            "/sessions/session-1/messages", headers={"X-Mock-User": "u002"}
+        ).json()["messages"]
         assert first[-1]["role"] == "user"
         assert first[-1]["task_id"] == task_id
         assert "北京" in first[-1]["content"]
@@ -28,7 +30,9 @@ async def test_chat_history_roundtrip(tmp_path):
         )
         assert last_event(resumed, "result")["data"]["status"] == "COMPLETED"
 
-        second = client.get("/sessions/session-1/messages").json()["messages"]
+        second = client.get(
+            "/sessions/session-1/messages", headers={"X-Mock-User": "u002"}
+        ).json()["messages"]
         assert [message["role"] for message in second[-2:]] == ["user", "assistant"]
         assert second[-1]["content"]
 

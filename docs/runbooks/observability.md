@@ -50,6 +50,19 @@ API/worker --OTLP--> Collector
 - Prometheus 直接抓取 `api:8000/metrics`、`worker:8001/metrics` 和 Collector 的 `:8889`。
 - Grafana 自动加载 `Itinerary Agent` 看板。
 - Langfuse 只保留带 `task_id` 的 span，避免 HTTP/DB 噪声。
+- 告警规则源文件为 `deploy/prometheus/alerts.yml`，共享 Prometheus 挂载为
+  `/etc/prometheus/rules/itinerary-alerts.yml`。
+
+关键指标：
+
+| 指标 | 用途 |
+|---|---|
+| `itinerary_http_requests_total` / `itinerary_http_request_duration_seconds` | RED |
+| `itinerary_model_calls_total{fallback}` | 主备切换 |
+| `itinerary_tool_calls_total{tool,status,code}` | 工具错误分类 |
+| `itinerary_outbox_backlog` | 审批恢复积压 |
+| `itinerary_retention_deleted_rows_total` | 保留清理 |
+| `itinerary_sse_connections` | 在线 SSE 连接 |
 
 ## 故障排查
 
@@ -64,7 +77,31 @@ API/worker --OTLP--> Collector
 - 确认 `skywalking-oap` 开启了 `SW_OTEL_RECEIVER=default` 和
   `SW_RECEIVER_ZIPKIN=default`；
 - 检查 `sw_zipkin_span-*` 索引是否有文档；
-- OTel receiver 当前通过 Zipkin 转发，部分版本的服务目录查询可能为空，但原始 span 已落 ES。
+- 当前 SkyWalking 11.0.0 会把 OTLP/Zipkin span 落到 `sw_zipkin_span-*`，
+  但 `sw_segment-*` 为 0、`getAllServices` 为空，这是外部栈的已知限制。
+  业务 Trace 以 Postgres 投影和 Langfuse 为准；原始 span 可在 Kibana 查询：
+
+  ```bash
+  curl 'http://127.0.0.1:9200/sw_zipkin_span-*/_search?size=1&pretty'
+  ```
+
+- 若必须使用 SkyWalking UI，可在 P1 评估升级 OAP 或改接原生 SkyWalking agent。
+
+### 告警规则未生效
+
+- 检查共享 Prometheus 配置包含 `rule_files`：
+
+  ```bash
+  curl -s http://127.0.0.1:19090/api/v1/rules
+  ```
+
+- 应看到 `itinerary-agent` 组与 7 条规则；
+- 修改 `deploy/prometheus/alerts.yml` 后，同步到
+  `monitoring-stack/prometheus/alerts.yml` 并重载：
+
+  ```bash
+  docker kill -s SIGHUP prometheus
+  ```
 
 ### ELK 没有日志
 

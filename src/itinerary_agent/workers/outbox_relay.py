@@ -15,7 +15,7 @@ from itinerary_agent.application.ports import (
     TaskRepositoryPort,
 )
 from itinerary_agent.domain.models import ApprovalStatus, Decision, RequestContext
-from itinerary_agent.observability.metrics import OUTBOX_EVENTS
+from itinerary_agent.observability.metrics import OUTBOX_BACKLOG, OUTBOX_EVENTS
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,7 @@ class OutboxRelay:
                 worker_id=self.worker_id,
                 lease_seconds=self.lease_seconds,
             )
+            OUTBOX_BACKLOG.set(await self.outbox.count_pending())
             for event in events:
                 try:
                     await self._handle(event)

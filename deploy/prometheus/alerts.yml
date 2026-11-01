@@ -1,0 +1,85 @@
+groups:
+  - name: itinerary-agent
+    rules:
+      - alert: ItineraryServiceDown
+        expr: up{job=~"itinerary-(api|worker)"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: itinerary-agent
+        annotations:
+          summary: "{{ $labels.job }} 抓取失败"
+          description: "Prometheus 连续 2 分钟无法抓取 {{ $labels.instance }}。"
+
+      - alert: ItineraryHighErrorRate
+        expr: |
+          sum(rate(itinerary_http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(itinerary_http_requests_total[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: itinerary-agent
+        annotations:
+          summary: "HTTP 5xx 比例超过 5%"
+          description: "最近 5 分钟 5xx 比例持续高于 5%，检查 API 日志与依赖状态。"
+
+      - alert: ItineraryHighLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(itinerary_http_request_duration_seconds_bucket[5m]))
+            by (le)
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          service: itinerary-agent
+        annotations:
+          summary: "HTTP P95 延迟超过 2 秒"
+          description: "最近 5 分钟 P95 延迟持续超过 2 秒，检查模型/数据库/Redis。"
+
+      - alert: ItineraryModelFallbackSpike
+        expr: |
+          sum(rate(itinerary_model_calls_total{fallback="True"}[5m]))
+          /
+          clamp_min(sum(rate(itinerary_model_calls_total[5m])), 0.001)
+          > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          service: itinerary-agent
+        annotations:
+          summary: "模型主备切换比例超过 20%"
+          description: "主模型可能不可用或持续超时，检查 provider 状态与 API Key。"
+
+      - alert: ItineraryOutboxBacklog
+        expr: itinerary_outbox_backlog > 100
+        for: 10m
+        labels:
+          severity: warning
+          service: itinerary-agent
+        annotations:
+          summary: "Outbox 积压超过 100"
+          description: "审批恢复事件持续积压，检查 worker 是否存活/是否出现 dead 事件。"
+
+      - alert: ItineraryToolErrorSpike
+        expr: sum(rate(itinerary_tool_calls_total{status="error"}[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          service: itinerary-agent
+        annotations:
+          summary: "工具错误速率升高"
+          description: "检查 TOOL_TIMEOUT/TOOL_UNAVAILABLE/TOOL_BAD_RESPONSE 的分类计数。"
+
+      - alert: ItineraryRateLimitSpike
+        expr: sum(rate(itinerary_rate_limited_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: info
+          service: itinerary-agent
+        annotations:
+          summary: "限流触发频率升高"
+          description: "可能有客户端异常重试或容量不足，检查调用方与限流阈值。"
