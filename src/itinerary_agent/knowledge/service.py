@@ -128,6 +128,7 @@ class KnowledgeService:
                 insufficient=not clauses or missing_table,
                 trace={
                     "seed_count": len(seed_ids),
+                    "seed_ids": seed_ids,
                     "expanded_count": len(clauses),
                     "missing_table": missing_table,
                 },

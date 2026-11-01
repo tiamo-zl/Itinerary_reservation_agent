@@ -1,7 +1,7 @@
 DATABASE_URL ?= postgresql://itinerary:itinerary_dev@127.0.0.1:55432/itinerary
 TEST_DATABASE_URL ?= postgresql://itinerary:itinerary_dev@127.0.0.1:55432/itinerary_test
 
-.PHONY: db-up db-down db-logs migrate revision api worker idp obs-up obs-down test lint typecheck web-build smoke
+.PHONY: db-up db-down db-logs migrate revision api worker idp obs-up obs-down higress-up higress-down demo-seed test eval lint typecheck web-build smoke
 
 # 只启动 P0 需要的基础设施，不构建应用镜像。
 db-up:
@@ -37,12 +37,26 @@ obs-down:
 test:
 	TEST_DATABASE_URL=$(TEST_DATABASE_URL) uv run pytest -q
 
+eval:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.cli
+
 lint:
 	uv run ruff check src tests
+
+demo-seed:
+	PYTHONPATH=src uv run python scripts/seed_demo_task.py $(ARGS)
+
+higress-up:
+	./scripts/configure-higress.sh
+
+higress-down:
+	docker network disconnect \
+		itinerary-reservation-agent_default higress-ai 2>/dev/null || true
 
 typecheck:
 	uv run mypy \
 		src/itinerary_agent/application \
+		src/itinerary_agent/eval \
 		src/itinerary_agent/security \
 		src/itinerary_agent/tools \
 		src/itinerary_agent/workers \

@@ -30,7 +30,9 @@ make db-up                        # PostgreSQL 55432 / Redis 56379
 make migrate                      # Alembic upgrade head
 make api                          # API http://127.0.0.1:8000
 make worker                       # Worker http://127.0.0.1:8001
+make higress-up                   # 接入本机 Higress 网关（入口 8081）
 make test                         # 全量测试，需要 TEST_DATABASE_URL
+make eval                         # 金标集 + CI 阈值
 make lint                         # ruff
 make typecheck                    # mypy（新模块）
 

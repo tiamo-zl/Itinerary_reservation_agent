@@ -4,11 +4,6 @@ import json
 
 from itinerary_agent.domain.models import CallContext
 
-SYSTEM = (
-    "根据差旅需求生成执行步骤。只输出一个 JSON 对象，格式为 "
-    '{"steps":["search_flights","search_hotels"]}，不要 Markdown，不要解释。'
-)
-
 
 async def plan(state: dict, deps) -> dict:
     """生成执行计划。
@@ -31,9 +26,11 @@ async def plan(state: dict, deps) -> dict:
         refs = [clause.clause_id for clause in context.clauses]
 
     # 步骤 2：调用大模型生成计划。
+    template = deps.prompt("plan")
     ctx = CallContext(
         trace_id=state["trace_id"], tenant_id=state["tenant_id"],
         task_id=state["task_id"], purpose="plan",
+        prompt_version=template.version,
     )
     completion = None
     try:
@@ -42,7 +39,7 @@ async def plan(state: dict, deps) -> dict:
             trace_id=state["trace_id"],
         ):
             messages = [
-                {"role": "system", "content": SYSTEM},
+                {"role": "system", "content": template.text},
                 {"role": "user", "content": json.dumps(
                     state["request"], ensure_ascii=False
                 )},

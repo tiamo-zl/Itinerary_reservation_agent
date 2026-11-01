@@ -1,2 +1,16 @@
 {"id":"slot-alias-beijing","today":"2026-10-21","raw":{"destination":"北京","departure_date":"2026-11-03","duration_days":2,"budget":1000,"hotel_area":"王府井"},"expected":{"destination_city":"北京","start_date":"2026-11-03","end_date":"2026-11-04","budget_limit":1000,"need_flight":true,"need_hotel":true}}
 {"id":"slot-relative-next-tuesday","today":"2026-10-21","raw":{"destination":"北京","departure_date":"下周二","duration_days":2},"expected":{"destination_city":"北京","start_weekday":1,"duration_days":1}}
+{"id":"slot-tomorrow","today":"2026-10-21","raw":{"destination":"上海","departure_date":"明天"},"expected":{"destination_city":"上海","start_date":"2026-10-22"}}
+{"id":"slot-day-after-tomorrow","today":"2026-10-21","raw":{"destination":"杭州","departure_date":"后天"},"expected":{"destination_city":"杭州","start_date":"2026-10-23"}}
+{"id":"slot-days-later","today":"2026-10-21","raw":{"destination":"成都","departure_date":"3天后","duration_days":3},"expected":{"destination_city":"成都","start_date":"2026-10-24","duration_days":2}}
+{"id":"slot-this-week-friday","today":"2026-10-21","raw":{"destination":"深圳","departure_date":"本周五","duration_days":2},"expected":{"destination_city":"深圳","start_date":"2026-10-23","start_weekday":4,"duration_days":1}}
+{"id":"slot-next-monday","today":"2026-10-21","raw":{"destination":"武汉","departure_date":"下周一","duration_days":3},"expected":{"destination_city":"武汉","start_date":"2026-10-26","start_weekday":0,"duration_days":2}}
+{"id":"slot-no-flight","today":"2026-10-21","raw":{"destination":"南京","departure_date":"2026-11-03","need_flight":false},"expected":{"destination_city":"南京","need_flight":false,"need_hotel":true}}
+{"id":"slot-no-hotel","today":"2026-10-21","raw":{"destination":"西安","departure_date":"2026-11-03","need_hotel":false},"expected":{"destination_city":"西安","need_flight":true,"need_hotel":false}}
+{"id":"slot-origin-cabin","today":"2026-10-21","raw":{"destination":"北京","origin":"广州","departure_date":"2026-11-03","cabin":"business"},"expected":{"destination_city":"北京","origin_city":"广州","cabin":"business"}}
+{"id":"slot-purpose-area-budget","today":"2026-10-21","raw":{"destination":"上海","departure_date":"2026-11-03","purpose":"客户拜访","hotel_area":"陆家嘴","budget_limit":800},"expected":{"destination_city":"上海","purpose":"客户拜访","hotel_area":"陆家嘴","budget_limit":800}}
+{"id":"slot-explicit-end-date","today":"2026-10-21","raw":{"destination":"北京","departure_date":"2026-11-03","return_date":"2026-11-06","duration_days":9},"expected":{"destination_city":"北京","start_date":"2026-11-03","end_date":"2026-11-06"}}
+{"id":"slot-unknown-relative-kept","today":"2026-10-21","raw":{"destination":"北京","departure_date":"国庆"},"expected":{"destination_city":"北京","start_date":"国庆"}}
+{"id":"slot-next-sunday","today":"2026-10-21","raw":{"destination":"广州","departure_date":"下周日","duration_days":2},"expected":{"destination_city":"广州","start_date":"2026-11-01","start_weekday":6,"duration_days":1}}
+{"id":"slot-today","today":"2026-10-21","raw":{"destination":"北京","departure_date":"今天"},"expected":{"destination_city":"北京","start_date":"2026-10-21"}}
+{"id":"slot-default-needs","today":"2026-10-21","raw":{"destination":"北京","departure_date":"2026-11-03"},"expected":{"need_flight":true,"need_hotel":true}}

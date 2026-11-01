@@ -54,6 +54,16 @@ groups:
           summary: "模型主备切换比例超过 20%"
           description: "主模型可能不可用或持续超时，检查 provider 状态与 API Key。"
 
+      - alert: ItineraryModelCircuitOpen
+        expr: max by (provider) (itinerary_model_circuit_open) == 1
+        for: 1m
+        labels:
+          severity: warning
+          service: itinerary-agent
+        annotations:
+          summary: "{{ $labels.provider }} 模型熔断已打开"
+          description: "连续失败达到阈值，当前请求应走备用提供方；检查主模型可用性。"
+
       - alert: ItineraryOutboxBacklog
         expr: itinerary_outbox_backlog > 100
         for: 10m

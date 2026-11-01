@@ -26,6 +26,7 @@ class Container:
 
     model: object | None = None
     llm_cache: object | None = None
+    breaker: object | None = None
     rate_limiter: object | None = None
     orchestrator: object | None = None
     tools: object | None = None
@@ -40,6 +41,7 @@ class Container:
     approvals: object | None = None
     booking: object | None = None
     poller: object | None = None
+    http_client: object | None = None
     flight_inventory: object | None = None
     hotel_inventory: object | None = None
     user_directory: object | None = None
@@ -119,21 +121,30 @@ class Container:
         if self.settings.model_mode == "live":
             await self._init_live_model_and_knowledge()
 
-        # 步骤 3：审批与下单是 mock 外部系统，先于工具注册创建。
-        if self.approvals is None:
-            from itinerary_agent.adapters.mock.approval import MockApprovalSystem
+        # 步骤 3：审批与下单是外部系统，先于工具注册创建。
+        if self.settings.adapter_mode == "real":
+            raise RuntimeError("ADAPTER_MODE=real is not implemented")
+        if self.settings.adapter_mode == "http":
+            self._init_http_adapters()
+        else:
+            if self.approvals is None:
+                from itinerary_agent.adapters.mock.approval import (
+                    MockApprovalSystem,
+                )
 
-            self.approvals = MockApprovalSystem(
-                self.approval_repo,
-                self.settings.mock_approval_delay_seconds,
-                auto_approve=self.settings.mock_approval_auto_approve,
-            )
-        if self.booking is None:
-            from itinerary_agent.adapters.mock.booking import MockBookingSystem
+                self.approvals = MockApprovalSystem(
+                    self.approval_repo,
+                    self.settings.mock_approval_delay_seconds,
+                    auto_approve=self.settings.mock_approval_auto_approve,
+                )
+            if self.booking is None:
+                from itinerary_agent.adapters.mock.booking import (
+                    MockBookingSystem,
+                )
 
-            self.booking = MockBookingSystem(self.idempotency_repo)
+                self.booking = MockBookingSystem(self.idempotency_repo)
 
-        # 步骤 4：没有显式注入工具时，默认装配 mock 外部系统。
+        # 步骤 4：没有显式注入工具时，默认装配外部系统适配器。
         if self.tools is None:
             self.tools = self._default_tools()
 
@@ -220,6 +231,9 @@ class Container:
             await self.poller.stop()
         if self.approvals is not None:
             await self.approvals.stop()
+        if self.http_client is not None:
+            await self.http_client.close()
+            self.http_client = None
         if self.checkpointer_pool is not None:
             await self.checkpointer_pool.close()
             self.checkpointer_pool = None
@@ -273,12 +287,29 @@ class Container:
 
             self.model_call_repo = PostgresModelCallRepository(self.db)
 
+        if (
+            self.breaker is None
+            and self.settings.circuit_breaker_enabled
+            and self.redis is not None
+        ):
+            from itinerary_agent.model_gateway.circuit import (
+                RedisCircuitBreaker,
+            )
+
+            self.breaker = RedisCircuitBreaker(
+                self.redis, self.settings.environment,
+                failure_threshold=self.settings.circuit_failure_threshold,
+                cooldown_seconds=self.settings.circuit_cooldown_seconds,
+                trial_seconds=self.settings.circuit_trial_seconds,
+            )
+
         if self.model is None:
             from itinerary_agent.model_gateway.gateway import OpenAIChatGateway
 
             self.model = OpenAIChatGateway(
                 self.settings, ledger=self.model_call_repo,
                 traces=self.traces, cache=self.llm_cache,
+                breaker=self.breaker,
             )
 
         if self.knowledge is None:
@@ -298,6 +329,35 @@ class Container:
                 graph_hops=self.settings.policy_graph_hops,
                 max_expanded_clauses=self.settings.policy_max_expanded_clauses,
             )
+
+    def _init_http_adapters(self) -> None:
+        """装配独立 mock 依赖服务的 HTTP 适配器。"""
+        from itinerary_agent.adapters.http.approval import HttpApprovalSystem
+        from itinerary_agent.adapters.http.booking import HttpBookingSystem
+        from itinerary_agent.adapters.http.client import JsonHttpClient
+        from itinerary_agent.adapters.http.inventory import (
+            HttpFlightInventory,
+            HttpHotelInventory,
+        )
+        from itinerary_agent.adapters.http.users import HttpUserDirectory
+
+        if self.http_client is None:
+            self.http_client = JsonHttpClient(
+                self.settings.mock_deps_url,
+                timeout=self.settings.upstream_timeout_seconds,
+                max_retries=self.settings.upstream_max_retries,
+            )
+        client = self.http_client
+        self.user_directory = self.user_directory or HttpUserDirectory(client)
+        self.flight_inventory = (
+            self.flight_inventory or HttpFlightInventory(client)
+        )
+        self.hotel_inventory = self.hotel_inventory or HttpHotelInventory(client)
+        # 审批读取仍走本地投影；提交/决定同步写投影。
+        self.approvals = self.approvals or HttpApprovalSystem(
+            client, mirror=self.approval_repo
+        )
+        self.booking = self.booking or HttpBookingSystem(client)
 
     def _default_tools(self):
         """默认工具集：查询、用户、审批、下单，全部走 mock 适配器。"""
@@ -340,6 +400,7 @@ class Container:
             audit=self.audit,
             task_repo=self.task_repo,
             lease_seconds=self.settings.task_lease_seconds,
+            prompt_version=self.settings.prompt_version,
         )
 
     def _init_application_services(self) -> None:

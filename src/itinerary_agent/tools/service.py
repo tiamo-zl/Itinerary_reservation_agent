@@ -96,9 +96,11 @@ class ToolService:
                 )
             except Exception as exc:
                 logger.exception("tool failed: %s", name)
-                return self._fail(
-                    ctx, name, "TOOL_UNAVAILABLE", str(exc), True
-                )
+                # 适配器可提供稳定的上游错误码（UPSTREAM_TIMEOUT 等）；
+                # 其他异常统一按可重试的工具不可用处理。
+                code = getattr(exc, "code", "TOOL_UNAVAILABLE")
+                retryable = bool(getattr(exc, "retryable", True))
+                return self._fail(ctx, name, code, str(exc), retryable)
             finally:
                 TOOL_DURATION.labels(tool=name).observe(
                     perf_counter() - started

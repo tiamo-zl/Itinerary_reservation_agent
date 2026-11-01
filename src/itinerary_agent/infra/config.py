@@ -44,6 +44,9 @@ class Settings(BaseSettings):
             "http://localhost:5211",
             "http://127.0.0.1:8080",
             "http://localhost:8080",
+            # Higress 网关入口
+            "http://127.0.0.1:8081",
+            "http://localhost:8081",
         ]
     )
     trusted_hosts: list[str] = Field(default_factory=lambda: ["*"])
@@ -91,6 +94,16 @@ class Settings(BaseSettings):
     llm_cache_ttl_seconds: int = 86400
     model_pricing_file: str = "config/pricing.yaml"
 
+    # Prompt 版本与跨进程熔断。
+    prompt_version: str = "v1"
+    # 每任务预算；0 表示不限制。
+    task_token_budget: int = 0
+    task_cost_budget_usd: float = 0.0
+    circuit_breaker_enabled: bool = True
+    circuit_failure_threshold: int = 5
+    circuit_cooldown_seconds: int = 30
+    circuit_trial_seconds: int = 5
+
     # 接口限流：按用户/租户的每分钟固定窗口。
     rate_limit_enabled: bool = True
     rate_limit_chat_per_minute: int = 30
@@ -113,7 +126,11 @@ class Settings(BaseSettings):
     # 运行模式：
     # - adapter_mode=mock：外部系统全部使用模拟实现
     # - model_mode=scripted：不调用真实模型，便于跑测试和离线演示
-    adapter_mode: Literal["mock", "real"] = "mock"
+    # mock：进程内 mock；http：独立 mock 依赖服务；real 预留真实适配器。
+    adapter_mode: Literal["mock", "http", "real"] = "mock"
+    mock_deps_url: str = "http://127.0.0.1:9003"
+    upstream_timeout_seconds: float = 5.0
+    upstream_max_retries: int = 2
     model_mode: Literal["scripted", "live"] = "scripted"
     trace_retention_days: int = 7
     outbox_retention_days: int = 30

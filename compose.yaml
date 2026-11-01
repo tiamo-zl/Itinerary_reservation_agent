@@ -15,8 +15,14 @@ x-app-env: &app-env
   DATABASE_URL: postgresql://itinerary:itinerary_dev@postgres:5432/itinerary
   REDIS_URL: redis://redis:6379/0
   MODEL_MODE: scripted
-  ADAPTER_MODE: mock
-  AUTH_MODE: mock
+  ADAPTER_MODE: ${ADAPTER_MODE:-mock}
+  MOCK_DEPS_URL: ${MOCK_DEPS_URL:-http://mock-deps:9003}
+  UPSTREAM_TIMEOUT_SECONDS: ${UPSTREAM_TIMEOUT_SECONDS:-5}
+  UPSTREAM_MAX_RETRIES: ${UPSTREAM_MAX_RETRIES:-2}
+  AUTH_MODE: ${AUTH_MODE:-mock}
+  JWT_SECRET: ${JWT_SECRET:-}
+  JWT_ISSUER: ${JWT_ISSUER:-itinerary-agent-local}
+  JWT_AUDIENCE: ${JWT_AUDIENCE:-itinerary-agent}
   OTEL_ENABLED: ${OTEL_ENABLED:-false}
   OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318/v1/traces}
 
@@ -70,6 +76,12 @@ services:
     image: itinerary-reservation-agent:local
     profiles: ["core"]
     environment: *app-env
+    # Higress 用 DNS registry 解析这个带点的别名；单标签 api 在 Envoy
+    # 的 DNS 解析器里不可靠。
+    networks:
+      default:
+        aliases:
+          - api.local
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -111,6 +123,23 @@ services:
       start_period: 20s
     stop_grace_period: 30s
 
+  mock-deps:
+    image: itinerary-reservation-agent:local
+    profiles: ["mocks"]
+    command:
+      ["uvicorn", "--app-dir", "src",
+       "itinerary_agent.mock_services.deps:app",
+       "--host", "0.0.0.0", "--port", "9003"]
+    environment: *app-env
+    ports:
+      - "127.0.0.1:9003:9003"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9003/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   mock-idp:
     image: itinerary-reservation-agent:local
     profiles: ["mocks"]
@@ -149,6 +178,10 @@ services:
       context: ./web
       dockerfile: Dockerfile
     profiles: ["core"]
+    networks:
+      default:
+        aliases:
+          - web.local
     ports:
       - "127.0.0.1:8080:80"
     depends_on:

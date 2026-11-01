@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: itinerary-web
+  namespace: higress-system
+  annotations:
+    higress.io/destination: itinerary-web.dns
+spec:
+  ingressClassName: higress
+  rules:
+  - http:
+      paths:
+      # 根路径与静态资源交给 Vue/Nginx；更具体的 API 前缀由
+      # itinerary-api Ingress 按最长前缀优先匹配。
+      - path: /
+        pathType: Prefix
+        backend:
+          resource:
+            apiGroup: networking.higress.io
+            kind: McpBridge
+            name: default
+status:
+  loadBalancer: {}

@@ -73,6 +73,25 @@ RETENTION_DELETED = Counter(
     "Rows deleted by the retention worker",
     ["table"],
 )
+CIRCUIT_TRANSITIONS = Counter(
+    "itinerary_model_circuit_transitions_total",
+    "Model circuit breaker state transitions",
+    ["provider", "to"],
+)
+CIRCUIT_REJECTED = Counter(
+    "itinerary_model_circuit_rejected_total",
+    "Model calls rejected because the circuit is open",
+    ["provider"],
+)
+CIRCUIT_REDIS_ERRORS = Counter(
+    "itinerary_model_circuit_redis_errors_total",
+    "Circuit breaker Redis access failures",
+)
+CIRCUIT_OPEN = Gauge(
+    "itinerary_model_circuit_open",
+    "Whether the provider circuit is open (1) or closed (0)",
+    ["provider"],
+)
 
 
 def normalize_path(path: str) -> str:

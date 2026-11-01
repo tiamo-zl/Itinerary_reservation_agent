@@ -38,17 +38,24 @@ make worker                   # http://127.0.0.1:8001
 
 ```bash
 docker compose --profile core up -d --build
+make higress-up                  # 接入本机已有的 Higress 网关
 ```
 
+- Higress 统一入口：http://127.0.0.1:8081
 - Web（Nginx + Vue 构建）：http://127.0.0.1:8080
 - API：http://127.0.0.1:8000
 - Worker：http://127.0.0.1:8001
 - 就绪检查：`GET /readyz`；指标：`GET /metrics`
+- Higress 控制台：http://127.0.0.1:8002
+
+网关把 `/chat`、`/tasks`、`/traces` 等业务路径直连 API，其余路径交给
+Web；详见 `docs/runbooks/higress.md`。
 
 测试与检查：
 
 ```bash
 make test                     # 需要 TEST_DATABASE_URL
+make eval                     # 金标集 + 阈值，失败返回非零
 make lint
 make typecheck
 ```
@@ -56,6 +63,19 @@ make typecheck
 默认 `MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`，不访问真实模型或外部业务系统。
 切换 live 模式需要配置 DeepSeek / DashScope Key，并启动本地 Milvus（`127.0.0.1:19530`）。
 生产环境禁止 mock 鉴权，必须配置 JWT 或 OIDC。
+
+外部依赖支持两种 mock 形态：
+
+```bash
+# 进程内 mock（默认）
+ADAPTER_MODE=mock
+
+# 独立 HTTP mock 服务 + 真实 HTTP 适配器
+docker compose --profile core --profile mocks up -d --build mock-deps api worker
+ADAPTER_MODE=http MOCK_DEPS_URL=http://mock-deps:9003 ...
+```
+
+HTTP 模式覆盖用户、库存、审批、下单；超时/重试/trace 透传与幂等回放有契约测试。
 
 ## 生产化基线（P0）
 
@@ -71,6 +91,8 @@ make typecheck
 - Dockerfile、Compose core、GitHub Actions CI
 
 设计取舍见 `docs/adr/`，运维步骤见 `docs/runbooks/`。
+人工验收与观测观察方法见 `docs/runbooks/p0-acceptance.md`，
+模型流式/熔断/prompt 版本见 `docs/runbooks/model-gateway.md`。
 
 ## 五件套可观测
 
@@ -100,13 +122,14 @@ Prometheus 抓取 API/worker/Collector 指标；Grafana 自动加载看板。
 - 制度条款树/引用图/表格、pg_trgm + Milvus 混合检索、context pack
 - revision 修改、审批驳回/通过、取消/暂停
 - Trace/span 全链路记录与树形回放
-- 模型主备切换、结构化输出校验/修复、成本账本
+- 模型主备切换、Redis 共享熔断、真流式、prompt 版本注册表、任务预算、结构化输出校验/修复、成本账本
 - JWT/OIDC 鉴权、Redis 限流与缓存
 - 结构化日志、Prometheus 指标、OTel 接入点
 - 12 个端到端/集成场景
 - 观测控制台 API：trace 列表/概览、流转图、Checkpoint 历史、反馈与 badcase 回流
 - 审批工作台 API：审批列表/详情、任务当前状态
-- JSONL 评测集 harness：`tests/eval/`
+- JSONL 评测金标集：槽位、差标、RAG（recall@5/MRR/引用准确率/insufficient）、
+  审批/revision、prompt 版本对比、badcase 回放；阈值进 CI（`make eval`）
 
 ## 前端控制台（Vue）
 

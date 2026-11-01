@@ -22,3 +22,9 @@ class ModelUnavailable(ModelError):
     """主备提供方都不可用。"""
 
     code = "MODEL_UNAVAILABLE"
+
+
+class ModelBudgetExceeded(ModelError):
+    """任务级 token/成本预算已用尽。"""
+
+    code = "MODEL_BUDGET_EXCEEDED"

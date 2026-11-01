@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections.abc import AsyncIterator
 from time import perf_counter
 
 from openai import AsyncOpenAI
@@ -15,7 +16,12 @@ from openai import AsyncOpenAI
 from itinerary_agent.domain.models import CallContext, Completion, ModelTier
 from itinerary_agent.infra.config import Settings
 from itinerary_agent.model_gateway.cache import LLMCache
-from itinerary_agent.model_gateway.errors import ModelOutputError, ModelUnavailable
+from itinerary_agent.model_gateway.circuit import RedisCircuitBreaker
+from itinerary_agent.model_gateway.errors import (
+    ModelBudgetExceeded,
+    ModelOutputError,
+    ModelUnavailable,
+)
 from itinerary_agent.model_gateway.json_output import parse_and_validate
 from itinerary_agent.model_gateway.pricing import PriceTable
 from itinerary_agent.model_gateway.router import (
@@ -53,10 +59,12 @@ class _NullSpan:
 class OpenAIChatGateway:
     def __init__(self, settings: Settings, ledger=None, traces=None,
                  primary_client=None, fallback_client=None,
-                 cache: LLMCache | None = None):
+                 cache: LLMCache | None = None,
+                 breaker: RedisCircuitBreaker | None = None):
         self.settings = settings
         self.ledger = ledger
         self.traces = traces
+        self.breaker = breaker
         self.client = primary_client or AsyncOpenAI(
             base_url=settings.deepseek_base_url,
             api_key=(
@@ -115,6 +123,7 @@ class OpenAIChatGateway:
         messages = list(messages)
         if response_schema:
             messages.append({"role": "user", "content": JSON_INSTRUCTION})
+        await self._check_budget(ctx)
 
         # 步骤 3：只缓存确定性高的用途。
         cacheable = ctx.purpose in {"classify", "understand"}
@@ -142,6 +151,21 @@ class OpenAIChatGateway:
         for attempt, (provider, client, model) in enumerate(
             self._candidates(tier), start=1
         ):
+            if self.breaker is not None and not await self.breaker.allow(provider):
+                last_error = ModelUnavailable(f"{provider} circuit open")
+                await self._record(
+                    ctx, provider, model, 0, 0, 0.0, 0.0,
+                    status="short_circuited", error_code="CIRCUIT_OPEN",
+                    fallback_from=fallback_from, attempt=attempt,
+                )
+                MODEL_CALLS.labels(
+                    provider=provider, status="short_circuited",
+                    fallback=str(bool(fallback_from)),
+                ).inc()
+                if provider == self.settings.primary_provider_name:
+                    fallback_from = model
+                continue
+
             started = perf_counter()
             span = (
                 self.traces.span(
@@ -162,6 +186,8 @@ class OpenAIChatGateway:
                             client, model, messages, completion, response_schema
                         )
             except Exception as exc:  # noqa: BLE001 - 主备切换需要捕获上游所有失败
+                if self.breaker is not None:
+                    await self.breaker.failure(provider)
                 duration_ms = (perf_counter() - started) * 1000
                 error_code = self._error_code(exc)
                 await self._record(
@@ -185,6 +211,8 @@ class OpenAIChatGateway:
                     fallback_from = model
                 continue
 
+            if self.breaker is not None:
+                await self.breaker.success(provider)
             duration_ms = (perf_counter() - started) * 1000
             cost = self.pricing.cost(
                 provider, model, completion.prompt_tokens,
@@ -254,6 +282,33 @@ class OpenAIChatGateway:
                 ) from repair_error
             return repaired
 
+    async def _check_budget(self, ctx: CallContext) -> None:
+        """任务级预算闸门；0 表示不限制，账本不可用时跳过。"""
+        token_budget = self.settings.task_token_budget
+        cost_budget = self.settings.task_cost_budget_usd
+        if not ctx.task_id or (token_budget <= 0 and cost_budget <= 0):
+            return
+        usage_fn = getattr(self.ledger, "task_usage", None)
+        if usage_fn is None:
+            return
+        try:
+            usage = await usage_fn(ctx.task_id)
+        except Exception:
+            logger.exception("task budget lookup failed task=%s", ctx.task_id)
+            return
+        tokens = int(usage.get("tokens", 0))
+        cost = float(usage.get("cost_usd", 0.0))
+        if token_budget > 0 and tokens >= token_budget:
+            raise ModelBudgetExceeded(
+                f"task {ctx.task_id} token budget exhausted: {tokens}>="
+                f"{token_budget}"
+            )
+        if cost_budget > 0 and cost >= cost_budget:
+            raise ModelBudgetExceeded(
+                f"task {ctx.task_id} cost budget exhausted: {cost:.4f}>="
+                f"{cost_budget:.4f}"
+            )
+
     @staticmethod
     def _error_code(exc: Exception) -> str:
         if isinstance(exc, ModelOutputError):
@@ -309,10 +364,160 @@ class OpenAIChatGateway:
         except Exception:
             logger.exception("llm call ledger write failed")
 
-    async def stream(self, ctx: CallContext, messages: list[dict], tier: ModelTier):
-        # 真流式放到 P1；这里保持接口稳定。
-        completion = await self.complete(ctx, messages, tier)
-        yield completion.text
+    async def stream(self, ctx: CallContext, messages: list[dict],
+                     tier: ModelTier) -> AsyncIterator[str]:
+        """真流式补全。
+
+        首 token 之前失败才切换备用；已经输出内容后不再切换，避免把两个
+        模型的半截回答拼在一起。缓存命中时整段文本作为单个 chunk 返回。
+        """
+        messages = list(messages)
+        await self._check_budget(ctx)
+        cacheable = ctx.purpose in {"classify", "understand", "summarize"}
+        cache_key = self._cache_key(ctx, tier, messages, None)
+        if cacheable and self.cache is not None:
+            cached = await self.cache.get(cache_key)
+            if cached:
+                LLM_CACHE_HITS.inc()
+                completion = Completion.model_validate_json(cached)
+                await self._record(
+                    ctx, completion.provider or self.settings.primary_provider_name,
+                    completion.model, completion.prompt_tokens,
+                    completion.completion_tokens, 0.0, 0.0,
+                    status="ok", cache_hit=True, attempt=0,
+                )
+                yield completion.text
+                return
+            LLM_CACHE_MISSES.inc()
+
+        last_error: Exception | None = None
+        fallback_from: str | None = None
+        for attempt, (provider, client, model) in enumerate(
+            self._candidates(tier), start=1
+        ):
+            if self.breaker is not None and not await self.breaker.allow(provider):
+                last_error = ModelUnavailable(f"{provider} circuit open")
+                await self._record(
+                    ctx, provider, model, 0, 0, 0.0, 0.0,
+                    status="short_circuited", error_code="CIRCUIT_OPEN",
+                    fallback_from=fallback_from, attempt=attempt,
+                )
+                MODEL_CALLS.labels(
+                    provider=provider, status="short_circuited",
+                    fallback=str(bool(fallback_from)),
+                ).inc()
+                if provider == self.settings.primary_provider_name:
+                    fallback_from = model
+                continue
+
+            started = perf_counter()
+            chunks: list[str] = []
+            first_token = False
+            prompt_tokens = 0
+            completion_tokens = 0
+            span = (
+                self.traces.span(
+                    f"model.{ctx.purpose}.stream", "model",
+                    provider=provider, model=model,
+                    prompt_version=ctx.prompt_version,
+                    fallback_from=fallback_from,
+                )
+                if self.traces is not None else _NullSpan()
+            )
+            try:
+                async with span:
+                    async with asyncio.timeout(
+                        self.settings.model_timeout_seconds
+                    ):
+                        stream = await client.chat.completions.create(
+                            model=model, messages=messages,
+                            temperature=0, stream=True,
+                        )
+                        async for chunk in stream:
+                            usage = getattr(chunk, "usage", None)
+                            if usage is not None:
+                                prompt_tokens = (
+                                    getattr(usage, "prompt_tokens", 0)
+                                    or prompt_tokens
+                                )
+                                completion_tokens = (
+                                    getattr(usage, "completion_tokens", 0)
+                                    or completion_tokens
+                                )
+                            choices = getattr(chunk, "choices", None) or []
+                            if not choices:
+                                continue
+                            delta = getattr(choices[0], "delta", None)
+                            text = getattr(delta, "content", None)
+                            if not text:
+                                continue
+                            first_token = True
+                            chunks.append(text)
+                            yield text
+                text = "".join(chunks)
+                if not text:
+                    raise ModelUnavailable("empty model stream")
+            except Exception as exc:
+                if self.breaker is not None:
+                    await self.breaker.failure(provider)
+                duration_ms = (perf_counter() - started) * 1000
+                error_code = self._error_code(exc)
+                await self._record(
+                    ctx, provider, model, prompt_tokens, completion_tokens,
+                    0.0, duration_ms, status="error", error_code=error_code,
+                    fallback_from=fallback_from, attempt=attempt,
+                )
+                logger.warning(
+                    "model stream failed provider=%s model=%s code=%s: %s",
+                    provider, model, error_code, exc,
+                )
+                MODEL_CALLS.labels(
+                    provider=provider, status="error",
+                    fallback=str(bool(fallback_from)),
+                ).inc()
+                MODEL_ERRORS.labels(provider=provider, code=error_code).inc()
+                last_error = exc
+                if provider == self.settings.primary_provider_name:
+                    fallback_from = model
+                if first_token:
+                    raise ModelUnavailable(
+                        "stream interrupted after first token"
+                    ) from exc
+                continue
+
+            if self.breaker is not None:
+                await self.breaker.success(provider)
+            duration_ms = (perf_counter() - started) * 1000
+            prompt_tokens = prompt_tokens or max(
+                1, sum(len(str(item.get("content", ""))) for item in messages) // 4
+            )
+            completion_tokens = completion_tokens or max(1, len(text) // 4)
+            cost = self.pricing.cost(
+                provider, model, prompt_tokens, completion_tokens
+            )
+            MODEL_CALLS.labels(
+                provider=provider, status="ok",
+                fallback=str(bool(fallback_from)),
+            ).inc()
+            MODEL_TOKENS.labels(provider=provider, kind="prompt").inc(
+                prompt_tokens
+            )
+            MODEL_TOKENS.labels(provider=provider, kind="completion").inc(
+                completion_tokens
+            )
+            MODEL_COST.labels(provider=provider).inc(cost)
+            await self._record(
+                ctx, provider, model, prompt_tokens, completion_tokens,
+                cost, duration_ms, status="ok", fallback_from=fallback_from,
+                attempt=attempt,
+            )
+            if cacheable and self.cache is not None:
+                await self.cache.set(cache_key, Completion(
+                    text=text, model=model, provider=provider,
+                ).model_dump_json())
+            return
+
+        raise ModelUnavailable("所有模型提供方均不可用") from last_error
 
     async def embed(self, ctx: CallContext, texts: list[str]) -> list[list[float]]:
         raise NotImplementedError("use DashScopeEmbedder")

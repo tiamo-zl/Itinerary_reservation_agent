@@ -59,6 +59,9 @@ API/worker --OTLP--> Collector
 |---|---|
 | `itinerary_http_requests_total` / `itinerary_http_request_duration_seconds` | RED |
 | `itinerary_model_calls_total{fallback}` | 主备切换 |
+| `itinerary_model_circuit_open{provider}` | 模型熔断状态 |
+| `itinerary_model_circuit_transitions_total` | 熔断状态迁移 |
+| `itinerary_model_circuit_rejected_total` | 熔断拒绝的调用 |
 | `itinerary_tool_calls_total{tool,status,code}` | 工具错误分类 |
 | `itinerary_outbox_backlog` | 审批恢复积压 |
 | `itinerary_retention_deleted_rows_total` | 保留清理 |
@@ -95,7 +98,7 @@ API/worker --OTLP--> Collector
   curl -s http://127.0.0.1:19090/api/v1/rules
   ```
 
-- 应看到 `itinerary-agent` 组与 7 条规则；
+- 应看到 `itinerary-agent` 组与 8 条规则；
 - 修改 `deploy/prometheus/alerts.yml` 后，同步到
   `monitoring-stack/prometheus/alerts.yml` 并重载：
 

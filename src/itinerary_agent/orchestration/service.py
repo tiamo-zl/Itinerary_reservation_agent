@@ -21,6 +21,7 @@ from itinerary_agent.domain.models import (
     TripRequest,
     UserProfile,
 )
+from itinerary_agent.model_gateway.prompts import default_prompt_registry
 from itinerary_agent.orchestration.graph import build_graph
 from itinerary_agent.orchestration.state import initial_state
 
@@ -62,7 +63,8 @@ class _NoopSpan:
 class OrchestrationService:
     def __init__(self, model, traces, tools, knowledge, control,
                  checkpointer=None, memory=None, rules=None,
-                 audit=None, task_repo=None, lease_seconds: int = 300):
+                 audit=None, task_repo=None, lease_seconds: int = 300,
+                 prompts=None, prompt_version: str = "v1"):
         from langgraph.checkpoint.memory import MemorySaver
 
         self.model = model
@@ -76,6 +78,8 @@ class OrchestrationService:
         # 任务租约仓储；测试可注入 fake 或省略。
         self.task_repo = task_repo
         self.lease_seconds = lease_seconds
+        self.prompts = prompts or default_prompt_registry()
+        self.prompt_version = prompt_version
         # M1 使用内存 Checkpoint；M2 会由容器注入 AsyncSqliteSaver。
         self.checkpointer = checkpointer or MemorySaver()
         self.tier_light = ModelTier.LIGHT
@@ -91,6 +95,10 @@ class OrchestrationService:
             # 在独立 asyncio task 中丢失 contextvar 后生成新 trace。
             self.traces.start_trace(trace_id)
         return self.traces.span(name, layer, **attrs)
+
+    def prompt(self, purpose: str):
+        """按配置版本取 prompt；缺失版本回退注册表默认版本。"""
+        return self.prompts.get(purpose, self.prompt_version)
 
     def ctx_of(self, state: dict) -> RequestContext:
         """从图状态重建网关上下文。
@@ -187,6 +195,38 @@ class OrchestrationService:
         result = await self.tools.invoke(self.ctx_of(state), "get_user_profile", {})
         return UserProfile.model_validate(result.data)
 
+    async def _iter_graph(self, graph_input, config: dict, task_id: str,
+                          trace_id: str) -> AsyncIterator[Event]:
+        """把 LangGraph 的 updates/custom 流统一转成 SSE Event。
+
+        custom 流用于节点内部的 token 增量；updates 流用于节点进度和 interrupt。
+        """
+        async for mode, payload in self.graph.astream(
+            graph_input, config=config,
+            stream_mode=["updates", "custom"],
+        ):
+            if mode == "custom":
+                data = (
+                    dict(payload) if isinstance(payload, dict)
+                    else {"text": str(payload)}
+                )
+                data.setdefault("task_id", task_id)
+                data.setdefault("trace_id", trace_id)
+                yield Event(type="token", data=data)
+                continue
+            for node, value in payload.items():
+                if node == "__interrupt__":
+                    interrupt_value = value[0].value
+                    yield Event(type="interrupt", data={
+                        "task_id": task_id, "trace_id": trace_id,
+                        "human_request": interrupt_value,
+                    })
+                else:
+                    yield Event(type="progress", data={
+                        "task_id": task_id, "trace_id": trace_id,
+                        "node": node,
+                    })
+
     async def start_turn(self, ctx: RequestContext, message: str) -> AsyncIterator[Event]:
         """开始一轮对话并流式产出事件。
 
@@ -216,27 +256,21 @@ class OrchestrationService:
             "status": "PLANNING",
         })
 
-        # 步骤 3/4：流式执行图，区分 progress 和 interrupt。
+        # 步骤 3/4：流式执行图，token/progress/interrupt 统一转成 Event。
         interrupted_status: str | None = None
-        async for update in self.graph.astream(state, config=config, stream_mode="updates"):
-            for node, value in update.items():
-                if node == "__interrupt__":
-                    interrupt_value = value[0].value
-                    interrupted_status = (
-                        "WAITING_APPROVAL"
-                        if interrupt_value.get("kind") == "approval"
-                        else "WAITING_HUMAN"
-                    )
-                    await self._set_task_status(state["task_id"], interrupted_status)
-                    yield Event(
-                        type="interrupt",
-                        data={"task_id": state["task_id"], "human_request": interrupt_value},
-                    )
-                else:
-                    yield Event(
-                        type="progress",
-                        data={"task_id": state["task_id"], "node": node},
-                    )
+        async for event in self._iter_graph(
+            state, config, state["task_id"], state["trace_id"]
+        ):
+            if event.type == "interrupt":
+                interrupted_status = (
+                    "WAITING_APPROVAL"
+                    if event.data["human_request"].get("kind") == "approval"
+                    else "WAITING_HUMAN"
+                )
+                await self._set_task_status(
+                    state["task_id"], interrupted_status
+                )
+            yield event
 
         # 步骤 5：落最终状态/摘要，返回 result。
         final = await self.graph.aget_state(config)
@@ -386,30 +420,18 @@ class OrchestrationService:
             # 修改后的图会重新 plan → search → policy，可能再次 interrupt。
             yield Event(type="status", data={"task_id": task_id, "trace_id": ctx.trace_id, "status": "PLANNING"})
             interrupted_status: str | None = None
-            async for update in self.graph.astream(
+            async for event in self._iter_graph(
                 Command(resume={"action": "modify"}),
-                config=config,
-                stream_mode="updates",
+                config, task_id, ctx.trace_id,
             ):
-                for node, value in update.items():
-                    if node == "__interrupt__":
-                        interrupt_value = value[0].value
-                        interrupted_status = (
-                            "WAITING_APPROVAL"
-                            if interrupt_value.get("kind") == "approval"
-                            else "WAITING_HUMAN"
-                        )
-                        await self._set_task_status(task_id, interrupted_status)
-                        yield Event(
-                            type="interrupt",
-                            data={"task_id": task_id, "trace_id": ctx.trace_id,
-                                  "human_request": interrupt_value},
-                        )
-                    else:
-                        yield Event(
-                            type="progress",
-                            data={"task_id": task_id, "trace_id": ctx.trace_id, "node": node},
-                        )
+                if event.type == "interrupt":
+                    interrupted_status = (
+                        "WAITING_APPROVAL"
+                        if event.data["human_request"].get("kind") == "approval"
+                        else "WAITING_HUMAN"
+                    )
+                    await self._set_task_status(task_id, interrupted_status)
+                yield event
             final = await self.graph.aget_state(config)
             final_status = interrupted_status or final.values["status"]
             # 修改会改变 revision；即使再次停在确认节点也要更新任务索引。
@@ -445,27 +467,17 @@ class OrchestrationService:
         # 步骤 6：从 interrupt 现场继续流式执行。
         yield Event(type="status", data={"task_id": task_id, "trace_id": ctx.trace_id, "status": "EXECUTING"})
         interrupted_status: str | None = None
-        async for update in self.graph.astream(
-            Command(resume=payload), config=config, stream_mode="updates"
+        async for event in self._iter_graph(
+            Command(resume=payload), config, task_id, ctx.trace_id
         ):
-            for node, value in update.items():
-                if node == "__interrupt__":
-                    interrupt_value = value[0].value
-                    interrupted_status = (
-                        "WAITING_APPROVAL"
-                        if interrupt_value.get("kind") == "approval"
-                        else "WAITING_HUMAN"
-                    )
-                    await self._set_task_status(task_id, interrupted_status)
-                    yield Event(
-                        type="interrupt",
-                        data={"task_id": task_id, "human_request": interrupt_value},
-                    )
-                else:
-                    yield Event(
-                        type="progress",
-                        data={"task_id": task_id, "trace_id": ctx.trace_id, "node": node},
-                    )
+            if event.type == "interrupt":
+                interrupted_status = (
+                    "WAITING_APPROVAL"
+                    if event.data["human_request"].get("kind") == "approval"
+                    else "WAITING_HUMAN"
+                )
+                await self._set_task_status(task_id, interrupted_status)
+            yield event
 
         # 步骤 7：落最终状态/摘要，返回 result。
         final = await self.graph.aget_state(config)

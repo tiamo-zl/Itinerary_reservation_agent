@@ -11,22 +11,6 @@ from itinerary_agent.domain.models import (
     TripRequest,
 )
 
-# 明确列出目标字段，避免真实模型输出 destination/departure_date 等别名。
-SYSTEM_TEMPLATE = """你是差旅需求解析器。今天是 {today}。
-只输出一个 JSON 对象，不要 Markdown，不要解释。
-必须使用以下字段名：
-- destination_city: 目的地城市
-- origin_city: 出发城市（未知可为 null）
-- start_date: YYYY-MM-DD
-- end_date: YYYY-MM-DD
-- budget_limit: 数字
-- hotel_area: 住宿区域
-- cabin: 舱位
-- need_flight: 布尔
-- need_hotel: 布尔
-- purpose: 出差目的
-相对日期必须根据今天换算成 YYYY-MM-DD。"""
-
 WEEKDAYS = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5,
             "日": 6, "天": 6}
 
@@ -34,6 +18,7 @@ WEEKDAYS = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5,
 # 这样提示词和模型能力有偏差时，不会因为一个字段名就整条链路失败。
 ALIASES = {
     "destination": "destination_city",
+    "origin": "origin_city",
     "departure_date": "start_date",
     "return_date": "end_date",
     "budget": "budget_limit",
@@ -148,12 +133,14 @@ async def understand(state: dict, deps) -> dict:
     4. 目的地仍为空时追问；
     5. 成功则写回结构化需求。
     """
-    # 步骤 1：构造模型上下文和解析提示词。
+    # 步骤 1：构造模型上下文和解析提示词（版本由 prompt 注册表决定）。
+    template = deps.prompt("understand")
     ctx = CallContext(
         trace_id=state["trace_id"], tenant_id=state["tenant_id"],
         task_id=state["task_id"], purpose="understand",
+        prompt_version=template.version,
     )
-    system = SYSTEM_TEMPLATE.format(today=date.today().isoformat())
+    system = template.text.format(today=date.today().isoformat())
     try:
         async with deps.span(
             "orchestration.node.understand", "orchestration",

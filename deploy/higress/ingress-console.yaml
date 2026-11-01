@@ -1,0 +1,30 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: default
+  namespace: higress-system
+  annotations:
+    higress.io/destination: higress-console.static:80
+    higress.io/enable-rewrite: "true"
+    higress.io/rewrite-path: /landing
+  labels:
+    higress.io/domain_higress-default-domain: "true"
+    higress.io/resource-definer: higress
+spec:
+  ingressClassName: higress
+  rules:
+  - http:
+      paths:
+      # 控制台仍在 8002；网关上的 /console 保留一个 landing 入口，
+      # 不再占用应用的根路径。
+      - path: /console
+        pathType: Prefix
+        backend:
+          resource:
+            apiGroup: networking.higress.io
+            kind: McpBridge
+            name: default
+  tls:
+  - secretName: default
+status:
+  loadBalancer: {}

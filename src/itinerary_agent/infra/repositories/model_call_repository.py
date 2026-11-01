@@ -9,6 +9,16 @@ class PostgresModelCallRepository:
     def __init__(self, db: Database):
         self.db = db
 
+    async def task_usage(self, task_id: str) -> dict:
+        """任务累计 token/成本，用于预算闸门。"""
+        row = await self.db.fetchone(
+            "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) "
+            "AS tokens, COALESCE(SUM(cost_usd), 0) AS cost_usd "
+            "FROM llm_calls WHERE task_id = ?",
+            (task_id,),
+        )
+        return dict(row) if row else {"tokens": 0, "cost_usd": 0.0}
+
     async def record(self, *, trace_id: str, task_id: str | None,
                      tenant_id: str, purpose: str, model: str,
                      prompt_tokens: int, completion_tokens: int,

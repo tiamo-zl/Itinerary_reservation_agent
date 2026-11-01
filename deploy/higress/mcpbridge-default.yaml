@@ -1,0 +1,26 @@
+apiVersion: networking.higress.io/v1
+kind: McpBridge
+metadata:
+  name: default
+  namespace: higress-system
+  creationTimestamp: "2000-01-01T00:00:00Z"
+  resourceVersion: "1"
+spec:
+  registries:
+  - domain: 127.0.0.1:8001
+    name: higress-console
+    port: 80
+    type: static
+  # Higress 已连接到项目 Docker 网络；使用带点的别名让 Envoy 的 DNS
+  # 解析器稳定工作，避免依赖会变化的容器 IP。
+  - domain: api.local
+    name: itinerary-api
+    port: 8000
+    type: dns
+  - domain: web.local
+    name: itinerary-web
+    port: 80
+    type: dns
+  # AI_REGISTRIES_START
+  # AI_REGISTRIES_END
+status: {}

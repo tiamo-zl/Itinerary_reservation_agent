@@ -1,0 +1,14 @@
+{"id":"approval-read-allowed","action":"search_flights","status":"EXECUTING","expected_code":"OK"}
+{"id":"approval-book-needs-confirmation","action":"book_flight","status":"EXECUTING","policy_passed":true,"confirmed":false,"expected_code":"CONFIRMATION_REQUIRED"}
+{"id":"approval-book-needs-policy","action":"book_flight","status":"EXECUTING","policy_passed":null,"confirmed":true,"expected_code":"POLICY_BLOCKED"}
+{"id":"approval-book-needs-approval","action":"book_hotel","status":"EXECUTING","policy_passed":false,"requires_approval":true,"approval_status":"pending","confirmed":true,"expected_code":"APPROVAL_REQUIRED"}
+{"id":"approval-book-approved","action":"book_hotel","status":"EXECUTING","policy_passed":false,"requires_approval":true,"approval_status":"approved","confirmed":true,"expected_code":"OK"}
+{"id":"approval-book-rejected","action":"book_hotel","status":"EXECUTING","policy_passed":false,"requires_approval":true,"approval_status":"rejected","confirmed":true,"expected_code":"APPROVAL_REQUIRED"}
+{"id":"approval-book-blocked-no-approval","action":"book_flight","status":"EXECUTING","policy_passed":false,"requires_approval":false,"confirmed":true,"expected_code":"POLICY_BLOCKED"}
+{"id":"approval-terminal-cancelled","action":"book_flight","status":"CANCELLED","expected_code":"GUARD_DENIED"}
+{"id":"approval-terminal-completed","action":"search_flights","status":"COMPLETED","expected_code":"GUARD_DENIED"}
+{"id":"approval-unknown-action","action":"delete_everything","status":"EXECUTING","expected_code":"GUARD_DENIED"}
+{"id":"approval-submit-blocked","action":"submit_approval","status":"EXECUTING","policy_passed":false,"requires_approval":false,"expected_code":"POLICY_BLOCKED"}
+{"id":"approval-submit-allowed","action":"submit_approval","status":"EXECUTING","policy_passed":false,"requires_approval":true,"expected_code":"OK"}
+{"id":"revision-first-amendment","kind":"amendment","revision":0,"amended_request":{"destination_city":"上海","start_date":"2026-11-10","end_date":"2026-11-12"},"expected_revision":1}
+{"id":"revision-second-amendment","kind":"amendment","revision":3,"amended_request":{"destination_city":"广州"},"expected_revision":4}

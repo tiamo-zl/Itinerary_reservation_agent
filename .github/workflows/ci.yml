@@ -55,6 +55,7 @@ jobs:
         run: >
           uv run mypy
           src/itinerary_agent/application
+          src/itinerary_agent/eval
           src/itinerary_agent/security
           src/itinerary_agent/tools
           src/itinerary_agent/workers
@@ -70,6 +71,9 @@ jobs:
           --cov=src/itinerary_agent
           --cov-report=term-missing
           --cov-fail-under=70
+
+      - name: Evaluation thresholds
+        run: PYTHONPATH=src uv run python -m itinerary_agent.eval.cli
 
   frontend:
     runs-on: ubuntu-latest

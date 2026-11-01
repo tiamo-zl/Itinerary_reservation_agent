@@ -1,8 +1,9 @@
 # 生产化改造进度（2026-11-01）
 
 - 分支：`feat/observability-console`
-- 测试：**117 passed**，覆盖率 **84.7%**
-- 类型检查：`make typecheck` 覆盖 application/security/tools/workers/repositories
+- 测试：**131 passed**，覆盖率 **85.5%**
+- 评测：`make eval` 全部通过（66 条金标/回放用例）
+- 类型检查：`make typecheck` 覆盖 application/eval/security/tools/workers/repositories
 - 默认运行模式：`MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`
 
 ## 总体进度
@@ -10,7 +11,7 @@
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | P0 生产基线 | ✅ 100% | PostgreSQL、worker/outbox、鉴权、API 加固、工具治理、保留清理、可观测与 CI 收尾完成 |
-| P1 韧性与深度 | 约 20% | 五件套已接入；评测、HTTP mock、知识 CLI、前端、压测/混沌/安全未开始 |
+| P1 韧性与深度 | 约 60% | 五件套、Higress、HTTP mock、评测、模型网关深度已完成；知识 CLI、前端、压测/混沌/安全未开始 |
 | P2 规模化运维 | 0% | 未开始 |
 
 ## P0 明细
@@ -22,10 +23,10 @@
 | W2 Redis | ✅ 100% | 限流、LLM 缓存、故障降级、指标 | — |
 | W3 鉴权/API | ✅ 100% | JWT/OIDC、request_id、限流、就绪探针、错误信封、CORS/TrustedHost、游标分页、SSE 心跳/超时/断连、scope 强制、任务/会话归属 | — |
 | W4 Worker/Outbox | ✅ 100% | worker 分离、outbox relay、任务 lease、保留清理 worker、积压指标 | — |
-| W5 模型网关 | ✅ 90% | fallback、结构化校验/修复、成本账本、缓存、超时 | 真流式、共享熔断、prompt 注册表属于 P1 |
+| W5 模型网关 | ✅ 100% | fallback、结构化校验/修复、成本账本、缓存、超时；P1 已补真流式、共享熔断、prompt 注册表、任务预算 | — |
 | W6 工具治理 | ✅ 100% | 输入/输出 schema、超时、required_scopes、错误分类、工具指标、guard/审批/下单/幂等回放审计 | — |
 | W7 可观测 | ✅ 100% | OTel、JSON 日志、Prometheus 指标、Postgres trace 投影、五件套、告警规则接入共享 Prometheus | SkyWalking 服务目录为空属外部栈限制，见下 |
-| W8 测试/CI/文档 | ✅ 100% | 117 tests、84.7% 覆盖率、PG 测试库、ruff、mypy（新模块）、CI、ADR、Runbook | CI 尚未在 GitHub 实际运行 |
+| W8 测试/CI/文档 | ✅ 100% | 131 tests、85.5% 覆盖率、PG 测试库、ruff、mypy（新模块）、CI、ADR、Runbook | CI 尚未在 GitHub 实际运行 |
 
 ## 本轮（P0 收尾）完成项
 
@@ -52,10 +53,25 @@
 - worker 就绪检查包含 `retention`；指标 `itinerary_retention_deleted_rows_total`。
 - 新增 outbox 积压 gauge、工具调用/延迟指标。
 - `deploy/prometheus/alerts.yml`：服务不可用、5xx、P95 延迟、模型 fallback、outbox 积压、工具错误、限流。
-- 告警已挂载到共享 Prometheus（`/etc/prometheus/rules/itinerary-alerts.yml`），`/api/v1/rules` 可见 7 条规则。
+- 告警已挂载到共享 Prometheus（`/etc/prometheus/rules/itinerary-alerts.yml`），`/api/v1/rules` 可见 8 条规则。
+
+## P1 进展
+
+| 项目 | 状态 |
+|---|---|
+| 五件套可观测 | ✅ 基本完成：OTel Collector → SkyWalking/Langfuse，ELK，Prometheus/Grafana |
+| Higress 网关 | ✅ 完成：`/chat` 等业务路径直连 API，其余走 Web；`make higress-up` 幂等配置 |
+| HTTP mock 服务 + 真实适配器 | ✅ 完成：users/inventory/approval/booking；超时/重试/trace 透传/幂等回放契约测试 |
+| 评测金标集 | ✅ 完成：slot/policy/retrieval/approval/prompt/badcase 六类；阈值进 CI |
+| 模型网关深度 | ✅ 完成：真流式、Redis 共享熔断、prompt 版本注册表、任务预算、fallback/校验/成本 |
+| 知识入库 CLI / 重建 | ❌ 未开始 |
+| 前端鉴权/错误边界/SSE 重连/测试 | ❌ 未开始 |
+| 压测/混沌/安全 | ❌ 未开始 |
 
 ## 当前运行
 
+- Higress 网关：8081（控制台 8002）
+- HTTP mock 依赖：9003
 - 项目栈：API 8000、worker 8001、Web 8080、PostgreSQL 55432、Redis 56379
 - OTel Collector：4317 / 4318 / 8889
 - Prometheus：19090（已加载告警）
@@ -90,11 +106,25 @@
 3. Langfuse 与业务各有一套 Postgres/Redis，这是有意的故障域隔离，不建议合并。
 4. `mock-idp` 仅 JWT 调试需要，可随时停止。
 
+## 人工验收
+
+完整测试与观测手册：`docs/runbooks/p0-acceptance.md`
+
+覆盖：
+
+- 自动化基线、启动与健康检查
+- seed 演示任务、审批恢复、修改/取消、反馈/badcase
+- 重启保留、worker 停机、重复审批、并发 resume、审计/幂等/outbox
+- 鉴权、跨租户、JWT、限流、CORS
+- PG/Redis/模型降级
+- Grafana/Prometheus/Kibana/Langfuse/SkyWalking/OTel Collector 观察方法
+
 ## 验证命令
 
 ```bash
 make lint
 make typecheck
+make eval
 TEST_DATABASE_URL=postgresql://itinerary:itinerary_dev@127.0.0.1:55432/itinerary_test make test
 cd web && npm run build
 ```
@@ -102,16 +132,41 @@ cd web && npm run build
 本轮结果：
 
 - `ruff check src tests`：通过
-- `mypy`（CI 范围）：通过
-- `pytest`：117 passed，84.7% 覆盖率
-- Prometheus：7 条告警规则已加载
+- `mypy`（CI 范围，含 eval）：通过
+- `pytest`：131 passed，85.5% 覆盖率
+- `make eval`：全部 suite 通过
+- Prometheus：8 条告警规则已加载
+
+## 评测金标集（P1）
+
+`make eval` 输出：
+
+| suite | 用例 | 指标 |
+|---|---|---|
+| slot | 16 | exact=1.0，field=1.0 |
+| policy | 16 | accuracy=1.0 |
+| retrieval | 10 | recall@5=1.0，MRR=0.95，citation precision=0.81，insufficient=1.0 |
+| approval | 14 | pass=1.0 |
+| prompt | 6 | v1/v2 准确率=1.0 |
+| badcase | 4 | replay=1.0 |
+
+- 评测 runner 在 `src/itinerary_agent/eval/`
+- 用例与阈值在 `tests/eval/`
+- `pytest` 和 CI 都执行同一套阈值
+
+## 模型网关深度（P1）
+
+- 真流式：`OpenAIChatGateway.stream` + LangGraph custom stream + SSE `token` 事件
+- 首 token 前允许 fallback，首 token 后不再切换，避免拼接两个模型的半截回答
+- Redis 共享熔断：closed/open/half_open，冷却后单试探；Redis 故障 fail-open
+- Prompt 注册表：understand v1/v2、plan v1、summarize v1；版本写入 `llm_calls`
+- 任务级 token/成本预算（0 表示不限制）
+- 新增指标与 `ItineraryModelCircuitOpen` 告警
+- Runbook：`docs/runbooks/model-gateway.md`
 
 ## 建议下一步（P1）
 
-1. HTTP mock 服务 + 真实 HTTP 适配器 + 契约测试。
-2. 模型真流式、共享熔断、prompt 版本注册表。
-3. 评测金标集与 CI 阈值、badcase 回放。
-4. 知识入库 CLI / 重建 / 校验。
-5. 前端 JWT、错误边界、SSE 重连、Vitest/Playwright。
-6. 压测 / 混沌 / 安全测试。
-7. 视需要修复或替换 SkyWalking 服务目录查询。
+1. 知识入库 CLI / 重建 / 校验。
+2. 前端 JWT、错误边界、SSE 重连、Vitest/Playwright。
+3. 压测 / 混沌 / 安全测试（可直接复用 `X-Mock-Fault`）。
+4. 视需要修复或替换 SkyWalking 服务目录查询。
