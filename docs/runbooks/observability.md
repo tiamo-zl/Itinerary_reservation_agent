@@ -77,6 +77,39 @@ API/worker --OTLP--> Collector
 - `curl http://127.0.0.1:19091/api/v1/targets` 应显示三个 job 都是 `up`；
 - 应用 `/metrics` 必须可访问；worker 的端口是 8001。
 
+## 本地 Docker 文件布局（2026-11-01 迁移）
+
+外部栈的配置已集中到：
+
+```text
+/Users/lll/yuxiu/work_address_for_soft/docker/conf/
+  monitoring-stack/
+    docker-compose.yml
+    grafana/provisioning/
+    logstash/pipeline/
+    prometheus/
+    scripts/
+  langfuse-stack/
+    docker-compose.yml       # 由现有容器反推，含环境变量/密钥，权限 600
+    clickhouse/keeper_config.xml
+    clickhouse/config.d/keeper.xml
+```
+
+注意：
+
+- `langfuse-stack/docker-compose.yml` 包含 Langfuse/Postgres/Redis 等密钥，保持 `600` 权限，不要提交到仓库。
+- Named volumes 仍由 Docker 管理，不在 `data/` 下。
+- 项目自身的 `Dockerfile`、`deploy/`、`docker/postgres/init` 仍保留在仓库内，保证 clone 可复现。
+- Higress 的 `/Users/lll/higress` 未迁移。
+- 旧目录已移到 `~/.Trash/{monitoring-stack,langfuse-stack}-migrated-20261101`，确认无误后可清理。
+
+常用命令：
+
+```bash
+docker compose -f /Users/lll/yuxiu/work_address_for_soft/docker/conf/monitoring-stack/docker-compose.yml ps
+docker compose -f /Users/lll/yuxiu/work_address_for_soft/docker/conf/langfuse-stack/docker-compose.yml ps
+```
+
 ## 外部栈注意事项
 
 本仓库的 compose 依赖两个外部网络和容器，不负责创建它们：
