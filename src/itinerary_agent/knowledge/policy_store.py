@@ -1,12 +1,12 @@
-"""制度结构化存储（SQLite）。
+"""制度结构化存储（PostgreSQL）。
 
 职责：
 - policy_clauses：条款树节点；
 - policy_edges：引用/例外/父子关系，支撑图扩展；
 - policy_tables：结构化表格，不做文本切分；
-- policy_fts：中文关键词召回（FTS5 trigram）。
+- 关键词召回：pg_trgm（ILIKE + similarity），替代 SQLite FTS5。
 
-demo 约定 table_id 带租户/版本前缀；生产应改为复合主键。
+表结构由 Alembic 管理；`init()` 保留为空操作，兼容旧调用。
 """
 
 import json
@@ -14,50 +14,28 @@ import json
 from itinerary_agent.domain.models import PolicyTable
 from itinerary_agent.infra.db import Database
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS policy_clauses (
-  clause_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, doc_id TEXT NOT NULL,
-  parent_id TEXT, path TEXT NOT NULL, clause_type TEXT NOT NULL,
-  title TEXT NOT NULL, text TEXT NOT NULL, table_id TEXT,
-  policy_version TEXT NOT NULL, effective_from TEXT, effective_to TEXT,
-  order_no INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS policy_edges (
-  source_id TEXT NOT NULL, relation TEXT NOT NULL, target_id TEXT NOT NULL,
-  PRIMARY KEY (source_id, relation, target_id)
-);
-CREATE TABLE IF NOT EXISTS policy_tables (
-  table_id TEXT PRIMARY KEY, source_clause_id TEXT NOT NULL,
-  columns_json TEXT NOT NULL, rows_json TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS policy_definitions (
-  definition_id TEXT PRIMARY KEY, term TEXT NOT NULL, text TEXT NOT NULL,
-  source_clause_id TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS policy_ingest_reviews (
-  review_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  clause_id TEXT NOT NULL, ref_text TEXT NOT NULL, reason TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL
-);
-CREATE VIRTUAL TABLE IF NOT EXISTS policy_fts
-USING fts5(clause_id UNINDEXED, title, text, tokenize='trigram');
-"""
-
 
 class PolicyStore:
     def __init__(self, db: Database):
         self.db = db
 
     async def init(self) -> None:
-        # IF NOT EXISTS 保证重复启动不会破坏已有制度数据。
-        await self.db.conn.executescript(SCHEMA)
-        await self.db.conn.commit()
+        """表结构由 Alembic 负责；这里只做连接可用性检查。"""
+        await self.db.fetchone("SELECT 1 AS ok")
 
     async def upsert_clause(self, data: dict) -> None:
         await self.db.execute(
-            "INSERT OR REPLACE INTO policy_clauses (clause_id, tenant_id, doc_id, parent_id, "
+            "INSERT INTO policy_clauses (clause_id, tenant_id, doc_id, parent_id, "
             "path, clause_type, title, text, table_id, policy_version, effective_from, "
-            "effective_to, order_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "effective_to, order_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (clause_id) DO UPDATE SET "
+            "tenant_id=EXCLUDED.tenant_id, doc_id=EXCLUDED.doc_id, "
+            "parent_id=EXCLUDED.parent_id, path=EXCLUDED.path, "
+            "clause_type=EXCLUDED.clause_type, title=EXCLUDED.title, "
+            "text=EXCLUDED.text, table_id=EXCLUDED.table_id, "
+            "policy_version=EXCLUDED.policy_version, "
+            "effective_from=EXCLUDED.effective_from, "
+            "effective_to=EXCLUDED.effective_to, order_no=EXCLUDED.order_no",
             (
                 data["clause_id"], data["tenant_id"], data["doc_id"], data.get("parent_id"),
                 data["path"], data["clause_type"], data["title"], data["text"],
@@ -65,17 +43,11 @@ class PolicyStore:
                 data.get("effective_to"), data["order_no"],
             ),
         )
-        # FTS 表不参与 INSERT OR REPLACE，先删后插保持同步。
-        await self.db.execute("DELETE FROM policy_fts WHERE clause_id = ?", (data["clause_id"],))
-        await self.db.execute(
-            "INSERT INTO policy_fts (clause_id, title, text) VALUES (?, ?, ?)",
-            (data["clause_id"], data["title"], data["text"]),
-        )
 
     async def add_edge(self, source_id: str, relation: str, target_id: str) -> None:
         await self.db.execute(
-            "INSERT OR IGNORE INTO policy_edges (source_id, relation, target_id) "
-            "VALUES (?, ?, ?)",
+            "INSERT INTO policy_edges (source_id, relation, target_id) "
+            "VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
             (source_id, relation, target_id),
         )
 
@@ -83,14 +55,17 @@ class PolicyStore:
         # 无法解析的引用进入人工校对队列，不能静默丢弃。
         await self.db.execute(
             "INSERT INTO policy_ingest_reviews (clause_id, ref_text, reason, created_at) "
-            "VALUES (?, ?, ?, datetime('now'))",
+            "VALUES (?, ?, ?, now())",
             (clause_id, ref_text, reason),
         )
 
     async def upsert_table(self, table: PolicyTable) -> None:
         await self.db.execute(
-            "INSERT OR REPLACE INTO policy_tables "
-            "(table_id, source_clause_id, columns_json, rows_json) VALUES (?, ?, ?, ?)",
+            "INSERT INTO policy_tables "
+            "(table_id, source_clause_id, columns_json, rows_json) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (table_id) DO UPDATE SET "
+            "source_clause_id=EXCLUDED.source_clause_id, "
+            "columns_json=EXCLUDED.columns_json, rows_json=EXCLUDED.rows_json",
             (
                 table.table_id, table.source_clause_id,
                 json.dumps(table.columns, ensure_ascii=False),
@@ -119,14 +94,18 @@ class PolicyStore:
 
     async def keyword_search(self, tenant_id: str, policy_version: str,
                              query: str, limit: int = 10) -> list[dict]:
-        # 把用户输入包成短语，避免 FTS5 把引号/运算符解释成查询语法。
-        safe = query.replace('"', '""')
-        fts_query = f'"{safe}"'
+        """中文子串召回：pg_trgm 索引 + ILIKE，按相似度排序。
+
+        注意 SQL 里的 `%%` 是 psycopg 对字面量百分号的转义。
+        """
         rows = await self.db.fetchall(
-            "SELECT c.* FROM policy_fts f JOIN policy_clauses c ON c.clause_id = f.clause_id "
-            "WHERE policy_fts MATCH ? AND c.tenant_id = ? AND c.policy_version = ? "
-            "ORDER BY rank LIMIT ?",
-            (fts_query, tenant_id, policy_version, limit),
+            "SELECT c.* FROM policy_clauses c "
+            "WHERE c.tenant_id = ? AND c.policy_version = ? "
+            "AND (c.title ILIKE '%%' || ? || '%%' "
+            "     OR c.text ILIKE '%%' || ? || '%%') "
+            "ORDER BY GREATEST(similarity(c.title, ?), similarity(c.text, ?)) DESC "
+            "LIMIT ?",
+            (tenant_id, policy_version, query, query, query, query, limit),
         )
         return [dict(row) for row in rows]
 

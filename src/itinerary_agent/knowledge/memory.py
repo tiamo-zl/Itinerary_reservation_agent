@@ -9,6 +9,11 @@ from itinerary_agent.domain.models import UserMemory
 from itinerary_agent.infra.db import Database
 
 
+def _as_datetime(value) -> datetime:
+    """PostgreSQL 返回 datetime；旧数据可能是 ISO 字符串。"""
+    return value if isinstance(value, datetime) else datetime.fromisoformat(value)
+
+
 class MemoryStore:
     def __init__(self, db: Database):
         self.db = db
@@ -41,9 +46,9 @@ class MemoryStore:
                 user_id=row["user_id"], kind=row["kind"], key=row["key"],
                 value=row["value"], confidence=row["confidence"],
                 source_task_id=row["source_task_id"],
-                updated_at=datetime.fromisoformat(row["updated_at"]),
+                updated_at=_as_datetime(row["updated_at"]),
                 expires_at=(
-                    datetime.fromisoformat(row["expires_at"])
+                    _as_datetime(row["expires_at"])
                     if row["expires_at"] else None
                 ),
             )

@@ -1,13 +1,13 @@
 from fastapi.testclient import TestClient
 
 from itinerary_agent.api.app import create_app
-from itinerary_agent.infra.config import Settings
 from itinerary_agent.infra.container import build_container
+from tests.db_utils import make_test_settings
 
 
 def test_admin_reject(tmp_path):
     # 管理员驳回不存在的审批单应返回 404，而不是静默成功。
-    settings = Settings(_env_file=None, sqlite_path=tmp_path / "admin.db")
+    settings = make_test_settings()
     container = build_container(settings)
     app = create_app(container)
     with TestClient(app) as client:

@@ -32,14 +32,24 @@ class MockApprovalSystem:
 
         approval_id = uuid4().hex
         now = datetime.now(UTC).isoformat()
-        await self.db.execute(
+        inserted = await self.db.execute(
             "INSERT INTO approvals (approval_id, task_id, revision, status, comment, "
-            "payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (task_id, revision) DO NOTHING",
             (
                 approval_id, task_id, revision, "pending", None,
                 json.dumps(payload, ensure_ascii=False), now, now,
             ),
         )
+        if inserted == 0:
+            # 并发提交同一 task/revision 时复用已存在的审批单。
+            existing = await self.db.fetchone(
+                "SELECT approval_id FROM approvals WHERE task_id = ? AND revision = ?",
+                (task_id, revision),
+            )
+            if existing:
+                return await self.get(existing["approval_id"])
+
         # 默认不自动通过，让审批页展示待办；需要演示自动通过时显式开启。
         if self.auto_approve and self.delay < 900:
             timer = asyncio.create_task(self._auto_approve(approval_id))
@@ -67,9 +77,12 @@ class MockApprovalSystem:
         row = await self.db.fetchone(
             "SELECT * FROM approvals WHERE approval_id = ?", (approval_id,)
         )
+        created_at = row["created_at"]
+        if not isinstance(created_at, datetime):
+            created_at = datetime.fromisoformat(created_at)
         return ApprovalRef(
             approval_id=row["approval_id"],
             status=row["status"],
             comment=row["comment"],
-            submitted_at=datetime.fromisoformat(row["created_at"]),
+            submitted_at=created_at,
         )

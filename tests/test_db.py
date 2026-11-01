@@ -1,10 +1,9 @@
-from itinerary_agent.infra.db import Database
+from tests.db_utils import open_test_db
 
 
 async def test_init_and_insert_task(tmp_path):
-    # 使用临时 SQLite，避免污染 ./data 下的本地数据。
-    db = Database(tmp_path / "test.db")
-    await db.connect()
+    # 使用共享 PostgreSQL 测试库，conftest 会在用例前清空业务表。
+    db = await open_test_db()
     await db.execute(
         "INSERT INTO tasks (task_id, tenant_id, user_id, status, revision, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",

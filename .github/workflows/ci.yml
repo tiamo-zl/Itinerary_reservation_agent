@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: itinerary
+          POSTGRES_PASSWORD: itinerary_dev
+          POSTGRES_DB: itinerary_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U itinerary"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      TEST_DATABASE_URL: postgresql://itinerary:itinerary_dev@127.0.0.1:5432/itinerary_test
+      DATABASE_URL: postgresql://itinerary:itinerary_dev@127.0.0.1:5432/itinerary_test
+      REDIS_URL: redis://127.0.0.1:6379/0
+      MODEL_MODE: scripted
+      ENVIRONMENT: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev --frozen
+
+      - name: Lint
+        run: uv run ruff check src tests
+
+      - name: Typecheck new modules
+        run: >
+          uv run mypy
+          src/itinerary_agent/application
+          src/itinerary_agent/workers
+          src/itinerary_agent/infra/database.py
+          src/itinerary_agent/infra/repositories
+
+      - name: Migrate test database
+        run: uv run alembic upgrade head
+
+      - name: Test
+        run: >
+          uv run pytest -q
+          --cov=src/itinerary_agent
+          --cov-report=term-missing
+          --cov-fail-under=70
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci --prefix web
+
+      - name: Build
+        run: npm run build --prefix web

@@ -1,12 +1,12 @@
 from itinerary_agent.adapters.scripted_model import ScriptedModelGateway
 from itinerary_agent.domain.models import RequestContext
-from itinerary_agent.infra.config import Settings
 from itinerary_agent.infra.container import build_container
+from tests.db_utils import make_test_settings
 
 
 async def test_checkpoint_survives_container_restart(tmp_path):
-    # 两个容器共享同一个 SQLite 文件，验证任务能从 Checkpoint 恢复。
-    settings = Settings(_env_file=None, sqlite_path=tmp_path / "ckpt.db")
+    # 两个容器共享同一个 PostgreSQL，验证任务能从 Checkpoint 恢复。
+    settings = make_test_settings()
 
     c1 = build_container(settings)
     c1.model = ScriptedModelGateway([

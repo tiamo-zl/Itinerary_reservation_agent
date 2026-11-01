@@ -15,9 +15,9 @@ from itinerary_agent.domain.models import (
     TaskSnapshot,
     TaskStatus,
 )
-from itinerary_agent.infra.db import Database
 from itinerary_agent.knowledge.policy_store import PolicyStore
 from itinerary_agent.knowledge.service import KnowledgeService
+from tests.db_utils import open_test_db
 from tests.scenarios import (
     PLAN,
     UNDERSTAND,
@@ -266,8 +266,7 @@ async def test_table_row_selection(tmp_path):
 
 async def test_policy_version_and_insufficient(tmp_path):
     """只检索当前版本；无命中返回 insufficient。"""
-    db = Database(tmp_path / "version.db")
-    await db.connect()
+    db = await open_test_db()
     store = PolicyStore(db)
     await store.init()
     for clause_id, version, text in [

@@ -26,8 +26,16 @@ class MockBookingSystem:
             "booking_id": f"{kind}-{uuid4().hex[:8]}",
             "status": "confirmed",
         }
-        await self.db.execute(
-            "INSERT INTO idempotency (key, result, created_at) VALUES (?, ?, ?)",
+        # 并发重试时只有一个请求能插入成功，失败方回读已有结果。
+        inserted = await self.db.execute(
+            "INSERT INTO idempotency (key, result, created_at) VALUES (?, ?, ?) "
+            "ON CONFLICT (key) DO NOTHING",
             (key, json.dumps(result), datetime.now(UTC).isoformat()),
         )
+        if inserted == 0:
+            row = await self.db.fetchone(
+                "SELECT result FROM idempotency WHERE key = ?", (key,)
+            )
+            if row:
+                return {**json.loads(row["result"]), "replayed": True}
         return {**result, "replayed": False}

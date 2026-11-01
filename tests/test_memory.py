@@ -1,14 +1,13 @@
 from datetime import UTC, datetime
 
 from itinerary_agent.domain.models import UserMemory
-from itinerary_agent.infra.db import Database
 from itinerary_agent.knowledge.memory import MemoryStore
+from tests.db_utils import open_test_db
 
 
 async def test_memory_store_roundtrip(tmp_path):
-    # 长期偏好落 SQLite，跨任务读取；这里只验证最小读写。
-    db = Database(tmp_path / "m.db")
-    await db.connect()
+    # 长期偏好落 PostgreSQL，跨任务读取；这里只验证最小读写。
+    db = await open_test_db()
     store = MemoryStore(db)
     await store.upsert(UserMemory(
         memory_id="m1", tenant_id="demo-company", user_id="u001",

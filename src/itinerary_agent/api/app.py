@@ -7,10 +7,11 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 
 from itinerary_agent.api.routes import build_router
+from itinerary_agent.application.errors import AppError
 from itinerary_agent.infra.container import Container
 
 
@@ -30,10 +31,35 @@ def create_app(container: Container) -> FastAPI:
     app = FastAPI(title="Itinerary Reservation Agent", lifespan=lifespan)
     app.state.container = container
 
+    @app.exception_handler(AppError)
+    async def handle_app_error(request: Request, exc: AppError):
+        """应用层异常统一映射为 HTTP，handler 里不再散落 403/404 判断。"""
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": exc.message, "code": exc.code},
+        )
+
     @app.get("/health")
     async def health():
-        # M0 只返回进程级健康；M3 起会扩展为检查 Milvus/模型配置。
-        return {"status": "ok", "env": container.settings.env}
+        # 兼容旧入口；新部署请使用 /healthz 与 /readyz。
+        return {
+            "status": "ok",
+            "env": container.settings.environment,
+        }
+
+    @app.get("/healthz")
+    async def healthz():
+        """存活探针：进程能响应即可，不检查外部依赖。"""
+        return {"status": "ok"}
+
+    @app.get("/readyz")
+    async def readyz():
+        """就绪探针：数据库、Redis、Checkpoint 都可用才返回 200。"""
+        result = await container.readiness.check()
+        return JSONResponse(
+            status_code=200 if result["status"] == "ok" else 503,
+            content=result,
+        )
 
     @app.get("/")
     async def index():

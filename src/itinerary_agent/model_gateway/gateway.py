@@ -106,8 +106,9 @@ class OpenAIChatGateway:
         if self.db is not None:
             if cacheable:
                 await self.db.execute(
-                    "INSERT OR REPLACE INTO llm_cache (cache_key, value, created_at) "
-                    "VALUES (?, ?, ?)",
+                    "INSERT INTO llm_cache (cache_key, value, created_at) "
+                    "VALUES (?, ?, ?) ON CONFLICT (cache_key) DO UPDATE SET "
+                    "value=EXCLUDED.value, created_at=EXCLUDED.created_at",
                     (cache_key, result.model_dump_json(), datetime.now(UTC).isoformat()),
                 )
             await self.db.execute(

@@ -2,13 +2,13 @@ from fastapi.testclient import TestClient
 
 from itinerary_agent.adapters.scripted_model import ScriptedModelGateway
 from itinerary_agent.api.app import create_app
-from itinerary_agent.infra.config import Settings
 from itinerary_agent.infra.container import build_container
+from tests.db_utils import make_test_settings
 
 
 def test_chat_stream(tmp_path):
-    # 用临时 SQLite 和脚本化模型，不访问真实网络。
-    settings = Settings(_env_file=None, sqlite_path=tmp_path / "chat.db")
+    # 用测试 PostgreSQL 和脚本化模型，不访问真实网络。
+    settings = make_test_settings()
     container = build_container(settings)
     container.model = ScriptedModelGateway([
         '{"destination_city":"北京","start_date":"2026-11-03","end_date":"2026-11-05"}',

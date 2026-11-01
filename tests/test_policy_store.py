@@ -1,12 +1,11 @@
 from itinerary_agent.domain.models import PolicyTable
-from itinerary_agent.infra.db import Database
 from itinerary_agent.knowledge.policy_store import PolicyStore
+from tests.db_utils import open_test_db
 
 
 async def test_store_clause_edges_tables_and_fts(tmp_path):
-    # 制度检索的结构化底座：条款、引用边、表格、FTS5。
-    db = Database(tmp_path / "policy.db")
-    await db.connect()
+    # 制度检索的结构化底座：条款、引用边、表格、pg_trgm 关键词召回。
+    db = await open_test_db()
     store = PolicyStore(db)
     await store.init()
 

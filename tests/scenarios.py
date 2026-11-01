@@ -1,6 +1,6 @@
 """端到端场景的共享装配。
 
-所有场景默认离线：脚本化模型、mock 外部系统、临时 SQLite。
+所有场景默认离线：脚本化模型、mock 外部系统、共享 PostgreSQL 测试库。
 """
 
 import json
@@ -10,11 +10,11 @@ from itinerary_agent.adapters.mock.users import MockUserDirectory
 from itinerary_agent.adapters.scripted_model import ScriptedModelGateway
 from itinerary_agent.api.app import create_app
 from itinerary_agent.domain.models import PolicyContext, PolicyTable
-from itinerary_agent.infra.config import Settings
 from itinerary_agent.infra.container import build_container
-from itinerary_agent.infra.db import Database
+from itinerary_agent.infra.database import Database
 from itinerary_agent.knowledge.policy_store import PolicyStore
 from itinerary_agent.knowledge.service import KnowledgeService
+from tests.db_utils import TEST_DATABASE_URL, make_test_settings
 
 UNDERSTAND = (
     '{"origin_city":"上海","destination_city":"北京",'
@@ -53,11 +53,8 @@ class DegradedKnowledge:
 
 
 def make_app(tmp_path, script=None, **overrides):
-    settings = Settings(
-        _env_file=None,
-        sqlite_path=tmp_path / "scenario.db",
-        mock_approval_delay_seconds=999,
-    )
+    # tmp_path 保留在签名里兼容现有用例；测试库由 conftest 统一清理。
+    settings = make_test_settings()
     container = build_container(settings)
     container.model = ScriptedModelGateway(script or [UNDERSTAND, PLAN, RESPOND])
     for key, value in overrides.items():
@@ -115,7 +112,7 @@ class _FakeDenseStore:
 
 async def make_policy_service(tmp_path, clauses, dense_ids, tables=None):
     """构造带条款/边/表格的 KnowledgeService，用于制度场景。"""
-    db = Database(tmp_path / "policy.db")
+    db = Database(TEST_DATABASE_URL)
     await db.connect()
     store = PolicyStore(db)
     await store.init()

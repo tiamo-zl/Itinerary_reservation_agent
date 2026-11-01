@@ -1,0 +1,129 @@
+# 本地生产化基础设施与核心服务。
+#
+# 端口刻意避开宿主机上已有的 Langfuse 栈：
+#   Postgres 5432 -> 55432
+#   Redis    6379 -> 56379
+#
+# 用法：
+#   docker compose --profile core up -d --build
+#   docker compose --profile core down
+
+name: itinerary-reservation-agent
+
+x-app-env: &app-env
+  ENVIRONMENT: local
+  DATABASE_URL: postgresql://itinerary:itinerary_dev@postgres:5432/itinerary
+  REDIS_URL: redis://redis:6379/0
+  MODEL_MODE: scripted
+  ADAPTER_MODE: mock
+  AUTH_MODE: mock
+
+services:
+  postgres:
+    image: postgres:17
+    profiles: ["core"]
+    environment:
+      POSTGRES_USER: itinerary
+      POSTGRES_PASSWORD: itinerary_dev
+      POSTGRES_DB: itinerary
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # 首次初始化时额外创建测试库 itinerary_test。
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U itinerary -d itinerary"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7
+    profiles: ["core"]
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:56379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    image: itinerary-reservation-agent:local
+    profiles: ["core"]
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: itinerary-reservation-agent:local
+    profiles: ["core"]
+    environment: *app-env
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    stop_grace_period: 30s
+
+  worker:
+    image: itinerary-reservation-agent:local
+    profiles: ["core"]
+    command:
+      ["uvicorn", "--app-dir", "src", "itinerary_agent.workers.main:app",
+       "--host", "0.0.0.0", "--port", "8001"]
+    environment: *app-env
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    stop_grace_period: 30s
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    profiles: ["core"]
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
+  redisdata:

@@ -4,7 +4,6 @@
 密钥全部从环境变量或 .env 读取，绝不写进代码或图状态。
 """
 
-from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,16 +12,29 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """全局配置。
 
-    环境变量名与字段名一致（大小写不敏感），例如 `sqlite_path`
-    可由 `SQLITE_PATH` 覆盖。demo 默认可在无 API Key 的情况下启动，
+    环境变量名与字段名一致（大小写不敏感），例如 `database_url`
+    可由 `DATABASE_URL` 覆盖。demo 默认可在无 API Key 的情况下启动，
     但调用真实模型前必须提供对应 Key。
     """
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # 运行环境与本地存储。
-    env: str = "local"
-    sqlite_path: Path = Path("./data/itinerary.db")
+    # 运行环境与基础设施。
+    environment: Literal["local", "test", "staging", "prod"] = "local"
+    database_url: str = (
+        "postgresql://itinerary:itinerary_dev@127.0.0.1:55432/itinerary"
+    )
+    database_pool_min: int = 1
+    database_pool_max: int = 10
+    redis_url: str = "redis://127.0.0.1:56379/0"
+
+    # 鉴权：mock 仅允许 local/test；生产必须 jwt/oidc。
+    auth_mode: Literal["mock", "jwt", "oidc"] = "mock"
+
+    # 后台 worker：outbox 轮询与租约。
+    outbox_poll_interval: float = 1.0
+    outbox_max_attempts: int = 5
+    outbox_lease_seconds: int = 60
 
     # 聊天模型：所有档位都走 OpenAI 兼容协议，便于切换厂商。
     deepseek_base_url: str = "https://api.deepseek.com"

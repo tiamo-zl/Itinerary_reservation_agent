@@ -1,11 +1,10 @@
 from itinerary_agent.adapters.mock.booking import MockBookingSystem
-from itinerary_agent.infra.db import Database
+from tests.db_utils import open_test_db
 
 
 async def test_booking_is_idempotent(tmp_path):
     # 同一个幂等键重复下单必须返回同一结果，不能重复扣款/出票。
-    db = Database(tmp_path / "b.db")
-    await db.connect()
+    db = await open_test_db()
     booking = MockBookingSystem(db)
     first = await booking.book("book_flight", "t1:1:1", {"option_id": "f1"})
     second = await booking.book("book_flight", "t1:1:1", {"option_id": "f1"})
