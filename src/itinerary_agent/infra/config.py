@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     outbox_poll_interval: float = 1.0
     outbox_max_attempts: int = 5
     outbox_lease_seconds: int = 60
+    # 任务恢复租约：防止用户 resume 与 worker 并发恢复同一任务。
+    task_lease_seconds: int = 300
 
     # 聊天模型：所有档位都走 OpenAI 兼容协议，便于切换厂商。
     deepseek_base_url: str = "https://api.deepseek.com"

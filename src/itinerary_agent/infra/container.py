@@ -132,7 +132,14 @@ class Container:
         if self.checkpointer is None:
             await self._init_checkpointer()
 
-        # 步骤 7：编译编排图。
+        # 步骤 7：编译编排图。任务仓储必须先于编排器创建，
+        # 以便恢复路径获取租约。
+        if self.task_repo is None:
+            from itinerary_agent.infra.repositories.task_repository import (
+                PostgresTaskRepository,
+            )
+
+            self.task_repo = PostgresTaskRepository(self.db)
         if self.orchestrator is None:
             self.orchestrator = self.build_orchestrator()
 
@@ -265,6 +272,8 @@ class Container:
             memory=self.memory,
             rules=self.rules,
             audit=self.audit,
+            task_repo=self.task_repo,
+            lease_seconds=self.settings.task_lease_seconds,
         )
 
     def _init_application_services(self) -> None:

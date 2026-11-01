@@ -92,5 +92,15 @@ class OutboxRelay:
             approval_status=ApprovalStatus(payload["status"]),
             comment=payload.get("comment") or "",
         )
-        async for _ in self.orchestrator.resume(ctx, task_id, decision):
-            pass
+        busy = False
+        async for resume_event in self.orchestrator.resume(
+            ctx, task_id, decision
+        ):
+            if (
+                resume_event.type == "error"
+                and resume_event.data.get("code") == "TASK_BUSY"
+            ):
+                busy = True
+        if busy:
+            # 让 outbox 事件进入重试；下一轮若任务已被别人完成会直接跳过。
+            raise RuntimeError("task is being resumed by another process")

@@ -10,6 +10,8 @@ _TASK_COLUMNS = (
     "task_id, user_id, tenant_id, status, revision, trace_id, updated_at"
 )
 
+TERMINAL_STATUSES = ("COMPLETED", "CANCELLED", "FAILED")
+
 
 class PostgresTaskRepository:
     def __init__(self, db: Database):
@@ -38,6 +40,32 @@ class PostgresTaskRepository:
             (trace_id,),
         )
         return dict(row) if row else None
+
+    async def acquire_resume_lease(self, task_id: str, owner: str,
+                                   lease_seconds: int) -> dict | None:
+        """原子获取任务恢复租约。
+
+        条件更新保证并发调用只有一个成功；租约过期后允许其他进程接管。
+        终态任务不可恢复。返回 None 表示任务不存在、已结束或正被占用。
+        """
+        return await self.db.fetchone(
+            "UPDATE tasks SET lease_owner = ?, "
+            "lease_expires_at = now() + (? * interval '1 second'), "
+            "version = version + 1, updated_at = now() "
+            "WHERE task_id = ? "
+            f"AND status NOT IN {TERMINAL_STATUSES} "
+            "AND (lease_owner IS NULL OR lease_expires_at < now()) "
+            "RETURNING task_id, version, status, tenant_id, user_id, trace_id",
+            (owner, lease_seconds, task_id),
+        )
+
+    async def release_lease(self, task_id: str, owner: str) -> None:
+        """释放租约；只释放自己持有的锁，避免误删他人的租约。"""
+        await self.db.execute(
+            "UPDATE tasks SET lease_owner = NULL, lease_expires_at = NULL, "
+            "updated_at = now() WHERE task_id = ? AND lease_owner = ?",
+            (task_id, owner),
+        )
 
     async def list_for_session(self, session_id: str) -> list[dict]:
         """会话 → 消息 → 任务反查，按最近更新排序。"""

@@ -1,5 +1,5 @@
 from itinerary_agent.adapters.scripted_model import ScriptedModelGateway
-from itinerary_agent.domain.models import RequestContext
+from itinerary_agent.domain.models import Event, RequestContext
 from itinerary_agent.infra.container import build_container
 from itinerary_agent.infra.repositories.outbox_repository import (
     PostgresOutboxRepository,
@@ -25,7 +25,7 @@ class FakeOrchestrator:
     async def resume(self, ctx, task_id, decision):
         self.calls += 1
         self.task_repo.task = {**self.task_repo.task, "status": "WAITING_HUMAN"}
-        yield None
+        yield Event(type="result", data={"task_id": task_id})
 
 
 async def test_outbox_claim_and_mark_done(tmp_path):

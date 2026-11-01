@@ -7,6 +7,7 @@ M1 只实现 start_turn，M2 增加 interrupt/resume，M4 增加审批与下单�
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from itinerary_agent.domain.models import (
     Decision,
@@ -58,7 +59,8 @@ class _NoopSpan:
 
 class OrchestrationService:
     def __init__(self, model, traces, tools, knowledge, control,
-                 checkpointer=None, db=None, memory=None, rules=None, audit=None):
+                 checkpointer=None, db=None, memory=None, rules=None,
+                 audit=None, task_repo=None, lease_seconds: int = 300):
         from langgraph.checkpoint.memory import MemorySaver
 
         self.model = model
@@ -70,6 +72,9 @@ class OrchestrationService:
         self.memory = memory
         self.rules = rules
         self.audit = audit
+        # 任务租约仓储；测试可注入 fake 或省略。
+        self.task_repo = task_repo
+        self.lease_seconds = lease_seconds
         # M1 使用内存 Checkpoint；M2 会由容器注入 AsyncSqliteSaver。
         self.checkpointer = checkpointer or MemorySaver()
         self.tier_light = ModelTier.LIGHT
@@ -271,7 +276,34 @@ class OrchestrationService:
 
     async def resume(self, ctx: RequestContext, task_id: str,
                      decision: Decision) -> AsyncIterator[Event]:
-        """从 Checkpoint 恢复被 interrupt 的任务。
+        """带租约的恢复入口。
+
+        用户点击恢复与 worker 处理 outbox 可能同时发生；只有拿到租约的
+        调用者能执行，另一个收到 TASK_BUSY 错误事件。
+        """
+        owner = f"resume-{uuid4().hex[:12]}"
+        if self.task_repo is not None:
+            leased = await self.task_repo.acquire_resume_lease(
+                task_id, owner, self.lease_seconds
+            )
+            if leased is None:
+                yield Event(type="error", data={
+                    "task_id": task_id,
+                    "trace_id": ctx.trace_id,
+                    "code": "TASK_BUSY",
+                    "message": "任务正在被其他进程恢复或已结束。",
+                })
+                return
+        try:
+            async for event in self._resume_locked(ctx, task_id, decision):
+                yield event
+        finally:
+            if self.task_repo is not None:
+                await self.task_repo.release_lease(task_id, owner)
+
+    async def _resume_locked(self, ctx: RequestContext, task_id: str,
+                             decision: Decision) -> AsyncIterator[Event]:
+        """从 Checkpoint 恢复被 interrupt 的任务（调用方必须持有租约）。
 
         步骤：
         1. 绑定任务 trace/task 上下文；
