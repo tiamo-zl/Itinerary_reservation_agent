@@ -19,6 +19,9 @@ from itinerary_agent.infra.repositories.feedback_repository import (
 from itinerary_agent.infra.repositories.idempotency_repository import (
     PostgresIdempotencyRepository,
 )
+from itinerary_agent.infra.repositories.judge_repository import (
+    PostgresJudgeRepository,
+)
 from itinerary_agent.infra.repositories.memory_repository import (
     PostgresMemoryRepository,
 )
@@ -49,6 +52,7 @@ __all__ = [
     "PostgresConversationRepository",
     "PostgresFeedbackRepository",
     "PostgresIdempotencyRepository",
+    "PostgresJudgeRepository",
     "PostgresMemoryRepository",
     "PostgresMessageRepository",
     "PostgresModelCallRepository",

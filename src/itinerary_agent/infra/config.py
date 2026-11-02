@@ -144,6 +144,13 @@ class Settings(BaseSettings):
     quality_sample_rate: float = 0.05
     quality_lookback_minutes: int = 60
     quality_max_tasks: int = 100
+    # LLM-as-judge 只建议在 live 模型模式启用；scripted 模式默认关闭。
+    judge_enabled: bool = False
+    judge_interval_seconds: int = 120
+    judge_sample_rate: float = 0.01
+    judge_lookback_minutes: int = 120
+    judge_max_tasks: int = 50
+    judge_prompt_version: str = "v1"
     capture_prompt: bool = False
     mock_approval_delay_seconds: float = 5.0
     # 默认手动审批，审批页才能真正展示待办；需要自动通过时显式开启。

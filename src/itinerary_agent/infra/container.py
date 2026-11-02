@@ -63,6 +63,8 @@ class Container:
     business_metrics_worker: object | None = None
     quality_eval_worker: object | None = None
     quality_finding_repo: object | None = None
+    judge_worker: object | None = None
+    judge_repo: object | None = None
     quality_queries: object | None = None
     task_queries: object | None = None
     trace_queries: object | None = None
@@ -261,8 +263,35 @@ class Container:
                     max_tasks=self.settings.quality_max_tasks,
                 )
                 self.quality_eval_worker.start()
+            # LLM judge 只在 live 模型模式启用，避免 scripted 模式调用模型。
+            if (
+                self.settings.judge_enabled
+                and self.settings.model_mode == "live"
+                and self.judge_worker is None
+            ):
+                from itinerary_agent.infra.repositories import (
+                    PostgresJudgeRepository,
+                )
+                from itinerary_agent.workers.llm_judge import LLMJudgeWorker
+
+                self.judge_repo = (
+                    self.judge_repo or PostgresJudgeRepository(self.db)
+                )
+                self.judge_worker = LLMJudgeWorker(
+                    self.task_repo, self.judge_repo, self.orchestrator,
+                    self.model,
+                    prompt_version=self.settings.judge_prompt_version,
+                    interval_seconds=self.settings.judge_interval_seconds,
+                    sample_rate=self.settings.judge_sample_rate,
+                    lookback_minutes=self.settings.judge_lookback_minutes,
+                    max_tasks=self.settings.judge_max_tasks,
+                )
+                self.judge_worker.start()
 
     async def stop(self) -> None:
+        if self.judge_worker is not None:
+            await self.judge_worker.stop()
+            self.judge_worker = None
         if self.quality_eval_worker is not None:
             await self.quality_eval_worker.stop()
             self.quality_eval_worker = None
@@ -523,6 +552,7 @@ class Container:
                 QualityQueryService,
             )
             from itinerary_agent.infra.repositories import (
+                PostgresJudgeRepository,
                 PostgresQualityFindingRepository,
             )
 
@@ -530,8 +560,9 @@ class Container:
                 self.quality_finding_repo
                 or PostgresQualityFindingRepository(self.db)
             )
+            self.judge_repo = self.judge_repo or PostgresJudgeRepository(self.db)
             self.quality_queries = QualityQueryService(
-                self.quality_finding_repo
+                self.quality_finding_repo, self.judge_repo
             )
         from itinerary_agent.infra.rate_limit import RateLimiter
 

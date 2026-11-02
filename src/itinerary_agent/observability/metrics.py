@@ -137,3 +137,23 @@ QUALITY_PASS_RATIO = Gauge(
     "Near-line quality pass ratio per check for the latest batch",
     ["check"],
 )
+
+JUDGE_RESULTS = Counter(
+    "itinerary_judge_results_total",
+    "LLM judge verdicts",
+    ["verdict"],
+)
+JUDGE_SCORE = Histogram(
+    "itinerary_judge_score",
+    "LLM judge score (0-5)",
+    buckets=(0, 1, 2, 3, 4, 5),
+)
+JUDGE_PASS_RATIO = Gauge(
+    "itinerary_judge_pass_ratio",
+    "Pass ratio in the latest judge batch",
+)
+JUDGE_ERRORS = Counter(
+    "itinerary_judge_errors_total",
+    "LLM judge failures by code",
+    ["code"],
+)

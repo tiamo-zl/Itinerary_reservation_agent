@@ -265,6 +265,12 @@ def build_router(container) -> APIRouter:
             build_context(request), limit
         )
 
+    @router.get("/quality/judgements")
+    async def quality_judgements(request: Request, limit: int = 100):
+        return await container.quality_queries.list_judgements(
+            build_context(request), limit
+        )
+
     @router.get("/badcases")
     async def list_badcases(request: Request, status: str | None = None,
                             limit: int = 50, cursor: str | None = None):

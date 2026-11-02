@@ -72,7 +72,10 @@ class CallContext(BaseModel):
     trace_id: str
     tenant_id: str
     task_id: str | None = None
-    purpose: Literal["understand", "plan", "explain", "summarize", "classify", "embed"]
+    purpose: Literal[
+        "understand", "plan", "explain", "summarize", "classify",
+        "embed", "judge",
+    ]
     prompt_version: str = "v1"
 
 

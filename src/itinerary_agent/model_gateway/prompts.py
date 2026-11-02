@@ -51,10 +51,16 @@ PLAN_V1 = (
 
 SUMMARIZE_V1 = "用一句中文总结本次差旅方案。"
 
+JUDGE_V1 = """你是差旅 Agent 的质量评审。根据结构化输入判断本次任务回答是否合格。
+只输出 JSON：{"score": 0-5 的整数, "verdict": "pass" 或 "fail", "reason": "一句话理由"}。
+评价重点：是否回应了用户需求、方案与差标/审批结果一致、没有明显遗漏或矛盾。
+不要因为输入字段缺失而猜测；信息不足时给低分并说明。"""
+
 DEFAULT_PROMPTS = {
     "understand": {"v1": UNDERSTAND_V1, "v2": UNDERSTAND_V2},
     "plan": {"v1": PLAN_V1},
     "summarize": {"v1": SUMMARIZE_V1},
+    "judge": {"v1": JUDGE_V1},
 }
 
 

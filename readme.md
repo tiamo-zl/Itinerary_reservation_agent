@@ -102,7 +102,8 @@ Tempo 接入见 `docs/runbooks/tempo.md`，
 业务 KPI 与三块生产看板见 `docs/runbooks/business-metrics.md`，
 SLO/燃烧率见 `docs/runbooks/slo.md`，
 Badcase 闭环见 `docs/runbooks/badcase-loop.md`，
-近线质量评估见 `docs/runbooks/nearline-eval.md`。
+近线质量评估见 `docs/runbooks/nearline-eval.md`，
+LLM-as-judge 见 `docs/runbooks/llm-judge.md`。
 
 ## 五件套可观测
 
