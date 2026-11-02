@@ -179,8 +179,8 @@ class QualityEvalWorker:
             bucket = by_check.setdefault(finding["check_name"], [0, 0])
             bucket[0] += 1
             bucket[1] += int(finding["status"] == "pass")
-        for check, (total, passed) in by_check.items():
-            QUALITY_PASS_RATIO.labels(check=check).set(passed / total)
+        for check_name, (total, passed) in by_check.items():
+            QUALITY_PASS_RATIO.labels(check=check_name).set(passed / total)
         return {
             "sampled": len(sampled),
             "findings": len(findings),
