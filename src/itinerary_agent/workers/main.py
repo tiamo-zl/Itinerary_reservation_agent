@@ -60,6 +60,12 @@ def create_worker_app(container: Container) -> FastAPI:
                 or container.business_metrics_worker is not None
             ) else "error"
         )
+        result["checks"]["quality_eval"] = (
+            "ok" if (
+                not container.settings.quality_eval_enabled
+                or container.quality_eval_worker is not None
+            ) else "error"
+        )
         if any(value != "ok" for value in result["checks"].values()):
             result["status"] = "degraded"
         return JSONResponse(

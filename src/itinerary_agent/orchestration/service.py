@@ -297,6 +297,16 @@ class OrchestrationService:
             return []
         return await self.memory.list_messages(session_id, limit)
 
+    async def get_state_snapshot(self, task_id: str) -> dict:
+        """不等待 interrupt 的单次快照，供近线质量采样使用。"""
+        snapshot = await self.graph.aget_state(
+            {"configurable": {"thread_id": task_id}}
+        )
+        return {
+            "values": dict(snapshot.values),
+            "next": list(snapshot.next),
+        }
+
     async def get_state(self, task_id: str) -> dict:
         """返回任务当前 Checkpoint 状态，供聊天页恢复中断/刷新使用。"""
         config = {"configurable": {"thread_id": task_id}}

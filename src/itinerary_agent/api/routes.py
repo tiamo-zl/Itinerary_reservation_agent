@@ -259,6 +259,12 @@ def build_router(container) -> APIRouter:
             "comment": scrub(payload.comment),
         })
 
+    @router.get("/quality/findings")
+    async def quality_findings(request: Request, limit: int = 100):
+        return await container.quality_queries.list_findings(
+            build_context(request), limit
+        )
+
     @router.get("/badcases")
     async def list_badcases(request: Request, status: str | None = None,
                             limit: int = 50, cursor: str | None = None):

@@ -139,6 +139,11 @@ class Settings(BaseSettings):
     retention_interval_seconds: int = 3600
     business_metrics_enabled: bool = True
     business_metrics_interval_seconds: int = 15
+    quality_eval_enabled: bool = True
+    quality_eval_interval_seconds: int = 60
+    quality_sample_rate: float = 0.05
+    quality_lookback_minutes: int = 60
+    quality_max_tasks: int = 100
     capture_prompt: bool = False
     mock_approval_delay_seconds: float = 5.0
     # 默认手动审批，审批页才能真正展示待办；需要自动通过时显式开启。

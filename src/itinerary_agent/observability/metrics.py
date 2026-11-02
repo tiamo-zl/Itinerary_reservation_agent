@@ -122,3 +122,18 @@ APPROVAL_RECOVERY_SECONDS = Histogram(
     "Time for the worker to resume a task after an approval event",
     ["status"],
 )
+
+QUALITY_SAMPLES = Counter(
+    "itinerary_quality_samples_total",
+    "Near-line quality samples evaluated",
+)
+QUALITY_CHECKS = Counter(
+    "itinerary_quality_checks_total",
+    "Near-line quality checks by check and status",
+    ["check", "status"],
+)
+QUALITY_PASS_RATIO = Gauge(
+    "itinerary_quality_pass_ratio",
+    "Near-line quality pass ratio per check for the latest batch",
+    ["check"],
+)

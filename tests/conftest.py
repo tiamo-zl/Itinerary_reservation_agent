@@ -29,6 +29,7 @@ APP_TABLES = (
     "policy_tables",
     "policy_definitions",
     "policy_ingest_reviews",
+    "quality_findings",
 )
 
 

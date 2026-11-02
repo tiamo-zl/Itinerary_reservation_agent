@@ -34,6 +34,9 @@ from itinerary_agent.infra.repositories.outbox_repository import (
 from itinerary_agent.infra.repositories.policy_repository import (
     PostgresPolicyStore,
 )
+from itinerary_agent.infra.repositories.quality_repository import (
+    PostgresQualityFindingRepository,
+)
 from itinerary_agent.infra.repositories.span_repository import (
     PostgresSpanRepository,
 )
@@ -51,6 +54,7 @@ __all__ = [
     "PostgresModelCallRepository",
     "PostgresOutboxRepository",
     "PostgresPolicyStore",
+    "PostgresQualityFindingRepository",
     "PostgresSpanRepository",
     "PostgresTaskRepository",
     "PostgresTraceRepository",

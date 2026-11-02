@@ -17,6 +17,17 @@ class PostgresTaskRepository:
     def __init__(self, db: Database):
         self.db = db
 
+    async def list_recent(self, since_minutes: int,
+                          limit: int = 100) -> list[dict]:
+        """近线评估取样：最近更新过的任务。"""
+        rows = await self.db.fetchall(
+            f"SELECT {_TASK_COLUMNS} FROM tasks "
+            "WHERE updated_at >= now() - (? * interval '1 minute') "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (since_minutes, limit),
+        )
+        return [dict(row) for row in rows]
+
     async def status_counts(self) -> list[dict]:
         """按状态聚合任务数，供业务指标投影。"""
         rows = await self.db.fetchall(

@@ -61,6 +61,9 @@ class Container:
     outbox_relay: object | None = None
     retention_worker: object | None = None
     business_metrics_worker: object | None = None
+    quality_eval_worker: object | None = None
+    quality_finding_repo: object | None = None
+    quality_queries: object | None = None
     task_queries: object | None = None
     trace_queries: object | None = None
     conversation_queries: object | None = None
@@ -236,8 +239,33 @@ class Container:
                     ),
                 )
                 self.business_metrics_worker.start()
+            # 近线质量评估只抽样只读状态，不写业务数据。
+            if self.settings.quality_eval_enabled and self.quality_eval_worker is None:
+                from itinerary_agent.infra.repositories import (
+                    PostgresQualityFindingRepository,
+                )
+                from itinerary_agent.workers.quality_eval import (
+                    QualityEvalWorker,
+                )
+
+                self.quality_finding_repo = (
+                    self.quality_finding_repo
+                    or PostgresQualityFindingRepository(self.db)
+                )
+                self.quality_eval_worker = QualityEvalWorker(
+                    self.task_repo, self.quality_finding_repo,
+                    self.orchestrator,
+                    interval_seconds=self.settings.quality_eval_interval_seconds,
+                    sample_rate=self.settings.quality_sample_rate,
+                    lookback_minutes=self.settings.quality_lookback_minutes,
+                    max_tasks=self.settings.quality_max_tasks,
+                )
+                self.quality_eval_worker.start()
 
     async def stop(self) -> None:
+        if self.quality_eval_worker is not None:
+            await self.quality_eval_worker.stop()
+            self.quality_eval_worker = None
         if self.business_metrics_worker is not None:
             await self.business_metrics_worker.stop()
             self.business_metrics_worker = None
@@ -490,6 +518,21 @@ class Container:
             self.approval_repo, self.task_repo, self.orchestrator,
             self.approvals, self.outbox_repo, self.db, self.audit,
         )
+        if self.quality_queries is None:
+            from itinerary_agent.application.quality_queries import (
+                QualityQueryService,
+            )
+            from itinerary_agent.infra.repositories import (
+                PostgresQualityFindingRepository,
+            )
+
+            self.quality_finding_repo = (
+                self.quality_finding_repo
+                or PostgresQualityFindingRepository(self.db)
+            )
+            self.quality_queries = QualityQueryService(
+                self.quality_finding_repo
+            )
         from itinerary_agent.infra.rate_limit import RateLimiter
 
         self.rate_limiter = self.rate_limiter or RateLimiter(
