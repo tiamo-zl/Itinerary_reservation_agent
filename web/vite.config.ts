@@ -17,7 +17,7 @@ const proxied = [
 export default defineConfig({
   plugins: [vue()],
   server: {
-    port: 5173,
+    port: 5211,
     proxy: Object.fromEntries(
       proxied.map((path) => [path, { target: backend, changeOrigin: true }]),
     ),

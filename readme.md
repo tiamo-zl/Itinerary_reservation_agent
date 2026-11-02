@@ -156,6 +156,10 @@ critical / warning / info 路由到不同邮件收件人。
 
 ## 前端控制台（Vue）
 
+> **状态：frozen demo。** 控制台保留用于演示业务视图，不作为观测/业务/质量
+> 的事实源；生产观测以 Tempo / Grafana / Kibana 为准。不再新增功能，
+> 正式退役见 `docs/adr/0006-quality-operations-and-console-retirement.md`。
+
 ```bash
 cd web
 npm install        # 由你安装前端依赖

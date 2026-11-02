@@ -40,7 +40,7 @@
 |---|---|---|
 | P0 生产基线 | ✅ 100% | PostgreSQL、worker/outbox、鉴权、API 加固、工具治理、保留清理、可观测与 CI 收尾完成 |
 | P1 韧性与深度 | ✅ 100% | 五件套、Higress、HTTP mock、评测、模型网关、知识 CLI、压测/混沌/安全已完成；前端加固按决定不做；镜像 CVE 修复归入 P2 |
-| P2 规模化运维 | 约 85% | Tempo、日志、KPI/看板、SLO、badcase、数据集、近线评估、LLM judge、镜像 CVE、告警通知已完成；剩余控制台退役 |
+| P2 规模化运维 | 约 85% | Tempo、日志、KPI/看板、SLO、badcase、数据集、近线评估、LLM judge、镜像 CVE、告警通知已完成；控制台已冻结为 demo，正式退役暂缓 |
 
 ## P0 明细
 
@@ -105,6 +105,17 @@
   注意 Playwright 1.64.1 不支持 macOS 13 内置 Chromium，本地需使用
   系统 Chrome（`channel: "chrome"`），CI 使用 Linux + 自带 Chromium。
 
+### 范围决定：控制台冻结为 demo（2026-11-02）
+
+- 决定日期：2026-11-02
+- 控制台保留可用，但不再投入：不新增功能，不为控制台单独修改数据结构。
+- 不是观测/业务/质量的事实源；生产观测以 Tempo / Grafana / Kibana 为准，
+  业务状态以 PostgreSQL / 后台 / 工单为准。
+- runbook、告警、验收和 badcase 流程不依赖控制台。
+- 当前仅绑定 `127.0.0.1:8080`；非本机部署需要认证或网关保护。
+- 正式退役（删除 `/overview`、`/trace`、`/flow` 视图）暂缓，
+  退出条件见 `docs/adr/0006-quality-operations-and-console-retirement.md`。
+
 ## 当前运行
 
 - Higress 网关：8081（控制台 8002）
@@ -149,8 +160,12 @@
 3. **镜像 CVE**：已改用 Alpine 运行镜像、移除运行期 pip 和无用的 SQLite 依赖；Trivy 扫描为 **0 HIGH/CRITICAL**（修复前 43）。需保留定期重建基础镜像的节奏，跟踪新 CVE。详见 `docs/status/security-report-2026-11-02.md`。
 4. Langfuse 与业务各有一套 Postgres/Redis，这是有意的故障域隔离，不建议合并。
 5. `mock-idp` 仅 JWT 调试需要，可随时停止。
-6. 告警当前是单 Alertmanager + 邮件单渠道；SMTP 故障时告警可能丢失，
-   生产需增加 IM/电话或外部 dead-man's switch。详见 `docs/runbooks/alerting.md`。
+6. 告警当前是单 Alertmanager + 邮件单渠道；按 2026-11-02 决定继续邮件，
+   IM/电话暂缓。SMTP 故障时告警可能丢失。详见 `docs/runbooks/alerting.md`。
+7. 控制台已冻结为 demo，不作为观测/业务/质量事实源；无完整 RBAC，
+   仅绑定 `127.0.0.1:8080`。正式退役暂缓，见 ADR 0006。
+8. 安全加固未做：真实 OIDC/SSO、密钥轮换、mTLS、字段级加密、审计导出
+   记录为未加固（2026-11-02 决定暂不投入）。
 
 ## 人工验收
 
@@ -271,10 +286,16 @@ cd web && npm run build
 - 前端 job：构建通过
 - Runbook：`docs/runbooks/ci.md`
 
-## 建议下一步（P2）
+## 下一步
 
-1. 控制台双跑退役与产品化后台/工单集成（ADR 0006）。
-2. 把镜像构建 + Trivy HIGH/CRITICAL 门禁接入 CI。
-3. 定期重建 Alpine 基础镜像，跟踪新 CVE。
-4. 告警升级：接企业微信/钉钉 relay，critical 增加电话/短信。
-5. 可选：真实 OIDC/SSO、密钥轮换、mTLS、字段级加密、审计导出。
+待做：
+
+1. LLM judge 校准 + holdout 定时跑。
+2. 模拟工单提交页面（demo）；`LocalTicketAdapter` 后续可替换为真实工单。
+3. 控制台正式退役（已冻结，待产品后台/工单就绪）。
+
+已决定暂缓（2026-11-02）：
+
+- 告警第二通道：继续邮件，IM/电话暂不接入。
+- CI 镜像门禁、Alpine 定期重建。
+- 安全加固：OIDC/SSO、密钥轮换、mTLS、字段级加密、审计导出；记录为未加固。

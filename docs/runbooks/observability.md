@@ -32,6 +32,8 @@ docker compose --profile core --profile observability up -d
 |---|---|---|
 | Grafana | http://127.0.0.1:13000 | monitoring-stack，含 `Itinerary Agent` 看板 |
 | Prometheus | http://127.0.0.1:19090 | 原始指标与告警规则 |
+| Alertmanager | http://127.0.0.1:19093 | 告警路由、分组、抑制 |
+| Mailpit | http://127.0.0.1:8025 | 本地测试邮件收件箱 |
 | SkyWalking UI | http://127.0.0.1:18080 | Trace 查询 |
 | Kibana | http://127.0.0.1:5601 | 日志检索，data stream `logs-itinerary` |
 | Langfuse | http://127.0.0.1:3030 | Agent/LLM span 分析 |
@@ -52,6 +54,8 @@ API/worker --OTLP--> Collector
 - Langfuse 只保留带 `task_id` 的 span，避免 HTTP/DB 噪声。
 - 告警规则源文件为 `deploy/prometheus/alerts.yml`，共享 Prometheus 挂载为
   `/etc/prometheus/rules/itinerary-alerts.yml`。
+- 告警经 Alertmanager 按 severity 路由到邮件；本地由 Mailpit 捕获。
+  详见 `docs/runbooks/alerting.md`。
 
 关键指标：
 
@@ -163,3 +167,8 @@ docker compose -f /Users/lll/yuxiu/work_address_for_soft/docker/conf/langfuse-st
 - ClickHouse 复制表缺少 `{shard}`/`{replica}` 宏，已在 `config.d/keeper.xml` 补齐；
 - 复制表元数据丢失时执行 `SYSTEM RESTORE REPLICA default.<table>`；
 - monitoring 的 SkyWalking OAP 增加了 `SW_RECEIVER_ZIPKIN=default`。
+
+## 相关文档
+
+- `docs/runbooks/quality-loop.md`：如何观测、扩充评测集、做 badcase 回流，以及控制台退场后的目标操作法（第 5 节）。
+- `docs/adr/0006-quality-operations-and-console-retirement.md`：拆分平台观测/业务状态/质量运营、退役自建观测页面的决策与退出条件。
