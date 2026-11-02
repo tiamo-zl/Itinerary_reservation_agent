@@ -43,6 +43,12 @@ exporters:
     tls:
       insecure: true
 
+  # 生产主 Trace 后端：Grafana Tempo。
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
   # Langfuse v4 要求 ingestion-version 头；Authorization 为 pk:sk 的 base64。
   otlphttp/langfuse:
     endpoint: http://langfuse-web:3000/api/public/otel
@@ -64,7 +70,8 @@ service:
     traces/skywalking:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlp/skywalking]
+      # 双跑：Tempo 为主，SkyWalking 保留兼容查询。
+      exporters: [otlp/tempo, otlp/skywalking]
     traces/langfuse:
       receivers: [otlp]
       processors: [memory_limiter, filter/langfuse, batch]

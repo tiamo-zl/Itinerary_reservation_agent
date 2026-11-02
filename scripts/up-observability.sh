@@ -10,7 +10,7 @@ if ! docker inspect langfuse-stack-langfuse-web-1 >/dev/null 2>&1; then
   exit 1
 fi
 
-for c in prometheus grafana skywalking-oap elasticsearch; do
+for c in prometheus grafana tempo skywalking-oap elasticsearch; do
   if ! docker inspect "$c" >/dev/null 2>&1; then
     echo "未找到 $c，请先启动 monitoring-stack。" >&2
     exit 1

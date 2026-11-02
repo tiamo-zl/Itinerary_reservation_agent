@@ -96,7 +96,8 @@ HTTP 模式覆盖用户、库存、审批、下单；超时/重试/trace 透传�
 模型流式/熔断/prompt 版本见 `docs/runbooks/model-gateway.md`，
 制度入库/重建/检查见 `docs/runbooks/knowledge.md`，
 压测/混沌/安全见 `docs/runbooks/load-chaos-security.md`，
-SkyWalking Zipkin 查询见 `docs/runbooks/skywalking.md`。
+SkyWalking Zipkin 查询见 `docs/runbooks/skywalking.md`，
+Tempo 接入见 `docs/runbooks/tempo.md`。
 
 ## 五件套可观测
 
@@ -106,13 +107,15 @@ make obs-up    # 自动读取 Langfuse key，启动 core + observability
 
 - Grafana：http://127.0.0.1:13000（monitoring-stack，含 `Itinerary Agent` 看板）
 - Prometheus：http://127.0.0.1:19090（含 `itinerary-agent` 告警规则）
+- Tempo：http://127.0.0.1:3200（生产主 Trace 后端）
 - SkyWalking UI：http://127.0.0.1:18080
-- SkyWalking Zipkin API：http://127.0.0.1:19412/zipkin/api/v2/services（服务目录查询）
+- SkyWalking Zipkin API：http://127.0.0.1:19412/zipkin/api/v2/services（双跑兼容查询）
 - Kibana：http://127.0.0.1:5601（data stream `logs-itinerary`）
 - Langfuse：http://127.0.0.1:3030
 
-数据流：应用 OTLP → Collector → SkyWalking / Langfuse；Docker 日志 → Elasticsearch；
-Prometheus 抓取 API/worker/Collector 指标；Grafana 自动加载看板。
+数据流：应用 OTLP → Collector → Tempo（主）/ SkyWalking（双跑）/ Langfuse；
+Docker 日志 → Elasticsearch；Prometheus 抓取 API/worker/Collector 指标；
+Grafana 自动加载看板与 Tempo 数据源。
 告警规则在 `deploy/prometheus/alerts.yml`，共享 Prometheus 通过
 `/etc/prometheus/rules/itinerary-alerts.yml` 加载。
 详见 `docs/runbooks/observability.md`。
