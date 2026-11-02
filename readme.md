@@ -99,7 +99,8 @@ HTTP 模式覆盖用户、库存、审批、下单；超时/重试/trace 透传�
 SkyWalking Zipkin 查询见 `docs/runbooks/skywalking.md`，
 Tempo 接入见 `docs/runbooks/tempo.md`，
 结构化日志与 `X-Trace-Id` 见 `docs/runbooks/logs.md`，
-业务 KPI 与三块生产看板见 `docs/runbooks/business-metrics.md`。
+业务 KPI 与三块生产看板见 `docs/runbooks/business-metrics.md`，
+SLO/燃烧率见 `docs/runbooks/slo.md`。
 
 ## 五件套可观测
 

@@ -93,3 +93,129 @@ groups:
         annotations:
           summary: "限流触发频率升高"
           description: "可能有客户端异常重试或容量不足，检查调用方与限流阈值。"
+
+  - name: itinerary-slo-recording
+    interval: 30s
+    rules:
+      - record: itinerary:slo_availability:ratio5m
+        expr: |
+          sum(rate(itinerary_http_requests_total{status!~"5..",path!~"/healthz|/readyz|/metrics"}[5m]))
+          /
+          clamp_min(sum(rate(itinerary_http_requests_total{path!~"/healthz|/readyz|/metrics"}[5m])), 0.001)
+
+      - record: itinerary:slo_availability:ratio1h
+        expr: |
+          sum(rate(itinerary_http_requests_total{status!~"5..",path!~"/healthz|/readyz|/metrics"}[1h]))
+          /
+          clamp_min(sum(rate(itinerary_http_requests_total{path!~"/healthz|/readyz|/metrics"}[1h])), 0.001)
+
+      - record: itinerary:slo_availability:ratio6h
+        expr: |
+          sum(rate(itinerary_http_requests_total{status!~"5..",path!~"/healthz|/readyz|/metrics"}[6h]))
+          /
+          clamp_min(sum(rate(itinerary_http_requests_total{path!~"/healthz|/readyz|/metrics"}[6h])), 0.001)
+
+      - record: itinerary:slo_availability:ratio30m
+        expr: |
+          sum(rate(itinerary_http_requests_total{status!~"5..",path!~"/healthz|/readyz|/metrics"}[30m]))
+          /
+          clamp_min(sum(rate(itinerary_http_requests_total{path!~"/healthz|/readyz|/metrics"}[30m])), 0.001)
+
+      # SLO = 99.5%，错误预算 = 0.005
+      - record: itinerary:slo_burn_rate:5m
+        expr: (1 - itinerary:slo_availability:ratio5m) / 0.005
+      - record: itinerary:slo_burn_rate:1h
+        expr: (1 - itinerary:slo_availability:ratio1h) / 0.005
+      - record: itinerary:slo_burn_rate:6h
+        expr: (1 - itinerary:slo_availability:ratio6h) / 0.005
+      - record: itinerary:slo_burn_rate:30m
+        expr: (1 - itinerary:slo_availability:ratio30m) / 0.005
+
+      - record: itinerary:slo_http_p95:5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(itinerary_http_request_duration_seconds_bucket[5m]))
+          )
+
+      - record: itinerary:slo_approval_recovery_p95:10m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(itinerary_approval_recovery_seconds_bucket{status="ok"}[10m])
+            )
+          )
+
+  - name: itinerary-slo-alerts
+    rules:
+      - alert: ItinerarySLOBurnFast
+        expr: |
+          itinerary:slo_burn_rate:1h > 14.4
+          and
+          itinerary:slo_burn_rate:5m > 14.4
+          and
+          sum(rate(itinerary_http_requests_total{path!~"/healthz|/readyz|/metrics"}[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          service: itinerary-agent
+          slo: availability
+        annotations:
+          summary: "SLO 快速燃烧：1h 燃烧率 > 14.4"
+          description: "按当前速度约 2 天会耗尽 28 天错误预算，检查 5xx 与依赖。"
+
+      - alert: ItinerarySLOBurnSlow
+        expr: |
+          itinerary:slo_burn_rate:6h > 6
+          and
+          itinerary:slo_burn_rate:30m > 6
+          and
+          sum(rate(itinerary_http_requests_total{path!~"/healthz|/readyz|/metrics"}[5m])) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+          service: itinerary-agent
+          slo: availability
+        annotations:
+          summary: "SLO 慢速燃烧：6h 燃烧率 > 6"
+          description: "错误预算消耗持续偏快，检查错误趋势与容量。"
+
+      - alert: ItineraryApprovalRecoverySlow
+        expr: itinerary:slo_approval_recovery_p95:10m > 10
+        for: 10m
+        labels:
+          severity: warning
+          service: itinerary-agent
+          slo: approval_recovery
+        annotations:
+          summary: "审批恢复 P95 超过 10 秒"
+          description: "检查 worker、outbox backlog、数据库与 Checkpoint。"
+
+      - alert: ItineraryTaskCompletionLow
+        expr: |
+          max(itinerary_task_completion_ratio) < 0.95
+          and
+          max(itinerary_tasks) > 0
+        for: 30m
+        labels:
+          severity: warning
+          service: itinerary-agent
+          slo: task_completion
+        annotations:
+          summary: "任务完成率低于 95%"
+          description: "检查 FAILED/CANCELLED/WAITING_* 状态趋势与工具/审批错误。"
+
+      - alert: ItineraryBadcaseRateHigh
+        expr: |
+          max(itinerary_badcase_rate_per_1000_tasks) > 50
+          and
+          max(itinerary_tasks) > 0
+        for: 1h
+        labels:
+          severity: warning
+          service: itinerary-agent
+          slo: quality
+        annotations:
+          summary: "每千任务 badcase 率超过 50"
+          description: "检查 open badcase 分类与最近发布变更。"
