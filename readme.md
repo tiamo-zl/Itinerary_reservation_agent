@@ -88,7 +88,7 @@ HTTP 模式覆盖用户、库存、审批、下单；超时/重试/trace 透传�
 - 模型主备切换、结构化输出校验/修复、成本账本
 - API 加固：CORS/TrustedHost、scope 强制、任务/会话归属、游标分页、SSE 心跳与超时
 - 工具治理：schema/超时/required_scopes/错误分类/审计覆盖
-- JSON 日志、Prometheus 指标与告警、OTel 接入点
+- JSON 日志（Kibana 结构化字段）、`X-Trace-Id`、Prometheus 指标与告警、OTel 接入点
 - Dockerfile、Compose core、GitHub Actions CI
 
 设计取舍见 `docs/adr/`，运维步骤见 `docs/runbooks/`。
@@ -97,7 +97,8 @@ HTTP 模式覆盖用户、库存、审批、下单；超时/重试/trace 透传�
 制度入库/重建/检查见 `docs/runbooks/knowledge.md`，
 压测/混沌/安全见 `docs/runbooks/load-chaos-security.md`，
 SkyWalking Zipkin 查询见 `docs/runbooks/skywalking.md`，
-Tempo 接入见 `docs/runbooks/tempo.md`。
+Tempo 接入见 `docs/runbooks/tempo.md`，
+结构化日志与 `X-Trace-Id` 见 `docs/runbooks/logs.md`。
 
 ## 五件套可观测
 

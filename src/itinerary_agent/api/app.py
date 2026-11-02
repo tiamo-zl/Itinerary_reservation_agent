@@ -113,7 +113,8 @@ def create_app(container: Container) -> FastAPI:
                             "code": "RATE_LIMITED",
                         },
                         headers={
-                            "Retry-After": str(decision.retry_after or 1)
+                            "Retry-After": str(decision.retry_after or 1),
+                            "X-Trace-Id": ctx.trace_id,
                         },
                     )
 
@@ -124,6 +125,9 @@ def create_app(container: Container) -> FastAPI:
                     decision.remaining
                 )
             response.headers["X-Request-ID"] = ctx.request_id
+            # resume/chat 在路由层设置精确 trace；不要用网关上下文覆盖。
+            if "x-trace-id" not in response.headers:
+                response.headers["X-Trace-Id"] = ctx.trace_id
             observe_http(
                 request.method, _route_label(request),
                 response.status_code, perf_counter() - started,
@@ -142,7 +146,8 @@ def create_app(container: Container) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=[
-            "X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining",
+            "X-Request-ID", "X-Trace-Id",
+            "X-RateLimit-Limit", "X-RateLimit-Remaining",
         ],
     )
     app.add_middleware(

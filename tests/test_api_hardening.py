@@ -2,7 +2,13 @@
 
 from fastapi.testclient import TestClient
 
-from tests.scenarios import last_event, make_app, post_sse, task_id_of
+from tests.scenarios import (
+    last_event,
+    make_app,
+    parse_sse,
+    post_sse,
+    task_id_of,
+)
 
 
 def test_cors_preflight_is_handled_before_auth(tmp_path):
@@ -60,3 +66,30 @@ def test_task_and_session_are_private_to_owner(tmp_path):
         assert client.get(
             f"/tasks/{task_id}", headers={"X-Mock-User": "u001"}
         ).status_code == 200
+
+
+def test_chat_and_resume_expose_the_same_trace_id(tmp_path):
+    app, _ = make_app(tmp_path)
+    with TestClient(app) as client:
+        with client.stream(
+            "POST", "/chat",
+            json={"message": "下周二去北京", "session_id": "trace-header"},
+            headers={"X-Mock-User": "u001"},
+        ) as response:
+            body = "".join(response.iter_text())
+            trace_header = response.headers["x-trace-id"]
+
+        events = parse_sse(body)
+        task_id = events[0]["data"]["task_id"]
+        assert events[0]["data"]["trace_id"] == trace_header
+
+        with client.stream(
+            "POST", f"/tasks/{task_id}/resume",
+            json={"action": "select"},
+            headers={"X-Mock-User": "u001"},
+        ) as resumed:
+            resumed_body = "".join(resumed.iter_text())
+            resumed_header = resumed.headers["x-trace-id"]
+
+        assert resumed_header == trace_header
+        assert "event: result" in resumed_body

@@ -19,6 +19,20 @@ receivers:
       - type: move
         from: attributes.docker.log
         to: body
+      # logs-itinerary 只接收应用日志，避免其他容器的非 JSON 行刷解析错误。
+      - type: filter
+        expr: 'body not matches "itinerary-agent"'
+      # 应用日志是 JSON 行；提升为 attributes.app.*，供 Kibana 精确过滤。
+      - type: json_parser
+        parse_from: body
+        parse_to: attributes.app
+        on_error: send
+      # 使用 Docker 记录的写入时间，而不是 Collector 的摄取时间。
+      - type: time_parser
+        parse_from: attributes.docker.time
+        layout_type: gotime
+        layout: "2006-01-02T15:04:05.999999999Z07:00"
+        on_error: send
 
 processors:
   memory_limiter:

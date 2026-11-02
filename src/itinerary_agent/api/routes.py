@@ -107,6 +107,8 @@ def build_router(container) -> APIRouter:
             headers={
                 "Cache-Control": "no-cache",
                 "X-Accel-Buffering": "no",
+                # SSE 在中间件返回前就开始写响应，显式返回精确 trace。
+                "X-Trace-Id": trace_id,
             },
         )
 

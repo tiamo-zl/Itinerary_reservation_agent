@@ -40,7 +40,7 @@
 |---|---|---|
 | P0 生产基线 | ✅ 100% | PostgreSQL、worker/outbox、鉴权、API 加固、工具治理、保留清理、可观测与 CI 收尾完成 |
 | P1 韧性与深度 | ✅ 100% | 五件套、Higress、HTTP mock、评测、模型网关、知识 CLI、压测/混沌/安全已完成；前端加固按决定不做；镜像 CVE 修复归入 P2 |
-| P2 规模化运维 | 约 10% | Tempo 主 Trace 已接入；镜像 CVE、SLO、badcase/工单闭环未完成 |
+| P2 规模化运维 | 约 20% | Tempo、结构化日志、`X-Trace-Id` 已接入；镜像 CVE、SLO、badcase/工单闭环未完成 |
 
 ## P0 明细
 
@@ -111,6 +111,7 @@
 - HTTP mock 依赖：9003
 - 项目栈：API 8000、worker 8001、Web 8080、PostgreSQL 55432、Redis 56379
 - Tempo：3200（OTLP 14317 / 14318）
+- Kibana 结构化日志字段：`attributes.app.*`
 - OTel Collector：4317 / 4318 / 8889
 - Prometheus：19090（已加载告警）
 - Grafana：13000
@@ -198,7 +199,8 @@ cd web && npm run build
 | 项目 | 状态 |
 |---|---|
 | Tempo 主 Trace 后端 | ✅ 接入；Collector 双写 Tempo + SkyWalking |
-| 日志结构化 | ❌ 未开始 |
+| 日志结构化 | ✅ 接入；ES `attributes.app.*` 可精确查询 |
+| `X-Trace-Id` | ✅ API/SSE 返回；工单与日志可用同一连接键 |
 | 业务 KPI 导出 | ❌ 未开始 |
 | SLO/燃烧率告警 | ❌ 未开始 |
 | Badcase 自动导出 / 工单 | ❌ 未开始 |
