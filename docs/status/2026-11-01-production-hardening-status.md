@@ -39,7 +39,7 @@
 |---|---|---|
 | P0 生产基线 | ✅ 100% | PostgreSQL、worker/outbox、鉴权、API 加固、工具治理、保留清理、可观测与 CI 收尾完成 |
 | P1 韧性与深度 | ✅ 100% | 五件套、Higress、HTTP mock、评测、模型网关、知识 CLI、压测/混沌/安全已完成；前端加固按决定不做；镜像 CVE 修复归入 P2 |
-| P2 规模化运维 | 0% | 未开始 |
+| P2 规模化运维 | 约 5% | 镜像扫描完成；CVE 修复、备份恢复、SLO、PgBouncer 未开始 |
 
 ## P0 明细
 
@@ -52,7 +52,7 @@
 | W4 Worker/Outbox | ✅ 100% | worker 分离、outbox relay、任务 lease、保留清理 worker、积压指标 | — |
 | W5 模型网关 | ✅ 100% | fallback、结构化校验/修复、成本账本、缓存、超时；P1 已补真流式、共享熔断、prompt 注册表、任务预算 | — |
 | W6 工具治理 | ✅ 100% | 输入/输出 schema、超时、required_scopes、错误分类、工具指标、guard/审批/下单/幂等回放审计 | — |
-| W7 可观测 | ✅ 100% | OTel、JSON 日志、Prometheus 指标、Postgres trace 投影、五件套、告警规则接入共享 Prometheus | SkyWalking 服务目录为空属外部栈限制，见下 |
+| W7 可观测 | ✅ 100% | OTel、JSON 日志、Prometheus 指标、Postgres trace 投影、五件套、告警规则接入共享 Prometheus | SkyWalking 原生服务目录为空，已用 Zipkin API 查询 |
 | W8 测试/CI/文档 | ✅ 100% | 138 tests、83.8% 覆盖率、PG 测试库、ruff、mypy（新模块）、GitHub Actions 实际运行通过、ADR、Runbook | — |
 
 ## 本轮（P0 收尾）完成项
@@ -93,7 +93,7 @@
 | 模型网关深度 | ✅ 完成：真流式、Redis 共享熔断、prompt 版本注册表、任务预算、fallback/校验/成本 |
 | 知识入库 CLI / 重建 | ✅ 完成：ingest/reindex/check；结构化入库、pg_trgm 重建、Milvus 重建、一致性审计 |
 | 前端鉴权/错误边界/SSE 重连/测试 | ⏭ 按决定不做 |
-| 压测/混沌/安全 | ✅ 完成：k6 20/50/100 阶梯、PG/Redis/worker/resume 混沌、Toxiproxy、安全回归；依赖/镜像扫描待做 |
+| 压测/混沌/安全 | ✅ 完成：k6 20/50/100 阶梯、PG/Redis/worker/resume 混沌、Toxiproxy、安全回归、依赖/镜像扫描；CVE 修复归入 P2 |
 
 ### 范围决定：前端加固不纳入当前 P1
 
