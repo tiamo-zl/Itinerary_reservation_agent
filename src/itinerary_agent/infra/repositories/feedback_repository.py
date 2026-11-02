@@ -19,6 +19,13 @@ class PostgresFeedbackRepository:
     def __init__(self, db: Database):
         self.db = db
 
+    async def status_counts(self) -> list[dict]:
+        """按状态聚合 badcase 数，供业务指标投影。"""
+        rows = await self.db.fetchall(
+            "SELECT status, COUNT(*) AS count FROM badcases GROUP BY status"
+        )
+        return [dict(row) for row in rows]
+
     async def create(self, badcase: dict) -> None:
         await self.db.execute(
             "INSERT INTO badcases (badcase_id, trace_id, task_id, tenant_id, "

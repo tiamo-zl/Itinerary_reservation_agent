@@ -111,3 +111,14 @@ def observe_http(method: str, path: str, status: int,
     route = normalize_path(path)
     HTTP_REQUESTS.labels(method=method, path=route, status=str(status)).inc()
     HTTP_DURATION.labels(method=method, path=route).observe(duration_seconds)
+
+APPROVAL_DECISION_SECONDS = Histogram(
+    "itinerary_approval_decision_seconds",
+    "Time from approval creation to decision",
+    ["decision"],
+)
+APPROVAL_RECOVERY_SECONDS = Histogram(
+    "itinerary_approval_recovery_seconds",
+    "Time for the worker to resume a task after an approval event",
+    ["status"],
+)

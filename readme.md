@@ -98,7 +98,8 @@ HTTP 模式覆盖用户、库存、审批、下单；超时/重试/trace 透传�
 压测/混沌/安全见 `docs/runbooks/load-chaos-security.md`，
 SkyWalking Zipkin 查询见 `docs/runbooks/skywalking.md`，
 Tempo 接入见 `docs/runbooks/tempo.md`，
-结构化日志与 `X-Trace-Id` 见 `docs/runbooks/logs.md`。
+结构化日志与 `X-Trace-Id` 见 `docs/runbooks/logs.md`，
+业务 KPI 与三块生产看板见 `docs/runbooks/business-metrics.md`。
 
 ## 五件套可观测
 
@@ -106,7 +107,10 @@ Tempo 接入见 `docs/runbooks/tempo.md`，
 make obs-up    # 自动读取 Langfuse key，启动 core + observability
 ```
 
-- Grafana：http://127.0.0.1:13000（monitoring-stack，含 `Itinerary Agent` 看板）
+- Grafana：http://127.0.0.1:13000
+  - `Itinerary Service Health`
+  - `Itinerary Agent Quality`
+  - `Itinerary Business Funnel`
 - Prometheus：http://127.0.0.1:19090（含 `itinerary-agent` 告警规则）
 - Tempo：http://127.0.0.1:3200（生产主 Trace 后端）
 - SkyWalking UI：http://127.0.0.1:18080

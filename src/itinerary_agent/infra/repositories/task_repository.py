@@ -17,6 +17,13 @@ class PostgresTaskRepository:
     def __init__(self, db: Database):
         self.db = db
 
+    async def status_counts(self) -> list[dict]:
+        """按状态聚合任务数，供业务指标投影。"""
+        rows = await self.db.fetchall(
+            "SELECT status, COUNT(*) AS count FROM tasks GROUP BY status"
+        )
+        return [dict(row) for row in rows]
+
     async def get(self, task_id: str) -> dict | None:
         """按任务 ID 读取索引行；不存在返回 None。"""
         row = await self.db.fetchone(

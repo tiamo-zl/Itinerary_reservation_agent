@@ -7,6 +7,7 @@
 import asyncio
 import json
 import logging
+from time import perf_counter
 from uuid import uuid4
 
 from itinerary_agent.application.ports import (
@@ -15,7 +16,11 @@ from itinerary_agent.application.ports import (
     TaskRepositoryPort,
 )
 from itinerary_agent.domain.models import ApprovalStatus, Decision, RequestContext
-from itinerary_agent.observability.metrics import OUTBOX_BACKLOG, OUTBOX_EVENTS
+from itinerary_agent.observability.metrics import (
+    APPROVAL_RECOVERY_SECONDS,
+    OUTBOX_BACKLOG,
+    OUTBOX_EVENTS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +62,13 @@ class OutboxRelay:
             )
             OUTBOX_BACKLOG.set(await self.outbox.count_pending())
             for event in events:
+                started = perf_counter()
+                recovery_status = "error"
                 try:
                     await self._handle(event)
                     await self.outbox.mark_done(event["id"])
                     OUTBOX_EVENTS.labels(status="done").inc()
+                    recovery_status = "ok"
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -69,6 +77,10 @@ class OutboxRelay:
                         event["id"], str(exc), self.max_attempts
                     )
                     OUTBOX_EVENTS.labels(status="failed").inc()
+                finally:
+                    APPROVAL_RECOVERY_SECONDS.labels(
+                        status=recovery_status
+                    ).observe(perf_counter() - started)
             if not events:
                 await asyncio.sleep(self.interval)
 

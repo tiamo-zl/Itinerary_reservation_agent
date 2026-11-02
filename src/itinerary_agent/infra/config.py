@@ -137,6 +137,8 @@ class Settings(BaseSettings):
     idempotency_retention_days: int = 7
     retention_enabled: bool = True
     retention_interval_seconds: int = 3600
+    business_metrics_enabled: bool = True
+    business_metrics_interval_seconds: int = 15
     capture_prompt: bool = False
     mock_approval_delay_seconds: float = 5.0
     # 默认手动审批，审批页才能真正展示待办；需要自动通过时显式开启。

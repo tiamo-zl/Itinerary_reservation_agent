@@ -41,6 +41,13 @@ class PostgresApprovalRepository:
         )
         return [dict(row) for row in rows]
 
+    async def status_counts(self) -> list[dict]:
+        """按状态聚合审批数，供业务指标投影。"""
+        rows = await self.db.fetchall(
+            "SELECT status, COUNT(*) AS count FROM approvals GROUP BY status"
+        )
+        return [dict(row) for row in rows]
+
     async def get(self, approval_id: str) -> dict | None:
         row = await self.db.fetchone(
             _APPROVAL_SQL + "WHERE a.approval_id = ?", (approval_id,)

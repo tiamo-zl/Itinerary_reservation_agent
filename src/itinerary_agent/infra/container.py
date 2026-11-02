@@ -60,6 +60,7 @@ class Container:
     model_call_repo: object | None = None
     outbox_relay: object | None = None
     retention_worker: object | None = None
+    business_metrics_worker: object | None = None
     task_queries: object | None = None
     trace_queries: object | None = None
     conversation_queries: object | None = None
@@ -219,8 +220,27 @@ class Container:
                     self.settings.retention_interval_seconds,
                 )
                 self.retention_worker.start()
+            # 业务 KPI 只由 worker 投影，避免 API/worker 写重复 gauge。
+            if (
+                self.settings.business_metrics_enabled
+                and self.business_metrics_worker is None
+            ):
+                from itinerary_agent.workers.business_metrics import (
+                    BusinessMetricsWorker,
+                )
+
+                self.business_metrics_worker = BusinessMetricsWorker(
+                    self.task_repo, self.approval_repo, self.feedback_repo,
+                    interval_seconds=(
+                        self.settings.business_metrics_interval_seconds
+                    ),
+                )
+                self.business_metrics_worker.start()
 
     async def stop(self) -> None:
+        if self.business_metrics_worker is not None:
+            await self.business_metrics_worker.stop()
+            self.business_metrics_worker = None
         if self.retention_worker is not None:
             await self.retention_worker.stop()
             self.retention_worker = None

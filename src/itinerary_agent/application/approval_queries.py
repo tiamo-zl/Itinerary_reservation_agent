@@ -5,6 +5,8 @@
 """
 
 import json
+import logging
+from datetime import UTC, datetime
 
 from itinerary_agent.application.access import (
     require_admin,
@@ -26,6 +28,9 @@ from itinerary_agent.application.ports import (
     UnitOfWorkPort,
 )
 from itinerary_agent.domain.models import RequestContext
+from itinerary_agent.observability.metrics import APPROVAL_DECISION_SECONDS
+
+logger = logging.getLogger(__name__)
 
 
 class ApprovalQueryService:
@@ -125,6 +130,18 @@ class ApprovalQueryService:
                     "trace_id": task.get("trace_id"),
                 },
             )
+
+        # 审批等待时长：只做观测，失败不影响决定。
+        try:
+            created_at = approval.get("created_at")
+            if isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at)
+            if isinstance(created_at, datetime):
+                APPROVAL_DECISION_SECONDS.labels(
+                    decision=decision
+                ).observe((datetime.now(UTC) - created_at).total_seconds())
+        except Exception:
+            logger.exception("approval decision metric failed")
         return {"ok": True}
 
     async def _to_item(self, row: dict) -> dict:
