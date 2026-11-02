@@ -102,6 +102,7 @@ Tempo 接入见 `docs/runbooks/tempo.md`，
 结构化日志与 `X-Trace-Id` 见 `docs/runbooks/logs.md`，
 业务 KPI 与三块生产看板见 `docs/runbooks/business-metrics.md`，
 SLO/燃烧率见 `docs/runbooks/slo.md`，
+告警通知见 `docs/runbooks/alerting.md`，
 Badcase 闭环见 `docs/runbooks/badcase-loop.md`，
 近线质量评估见 `docs/runbooks/nearline-eval.md`，
 LLM-as-judge 见 `docs/runbooks/llm-judge.md`。
@@ -117,6 +118,8 @@ make obs-up    # 自动读取 Langfuse key，启动 core + observability
   - `Itinerary Agent Quality`
   - `Itinerary Business Funnel`
 - Prometheus：http://127.0.0.1:19090（含 `itinerary-agent` 告警规则）
+- Alertmanager：http://127.0.0.1:19093（按 severity 路由邮件，当前接 163 SMTP）
+- Mailpit：http://127.0.0.1:8025（本地 SMTP 回退收件箱）
 - Tempo：http://127.0.0.1:3200（生产主 Trace 后端）
 - SkyWalking UI：http://127.0.0.1:18080
 - SkyWalking Zipkin API：http://127.0.0.1:19412/zipkin/api/v2/services（双跑兼容查询）
@@ -127,8 +130,9 @@ make obs-up    # 自动读取 Langfuse key，启动 core + observability
 Docker 日志 → Elasticsearch；Prometheus 抓取 API/worker/Collector 指标；
 Grafana 自动加载看板与 Tempo 数据源。
 告警规则在 `deploy/prometheus/alerts.yml`，共享 Prometheus 通过
-`/etc/prometheus/rules/itinerary-alerts.yml` 加载。
-详见 `docs/runbooks/observability.md`。
+`/etc/prometheus/rules/itinerary-alerts.yml` 加载；Alertmanager 按
+critical / warning / info 路由到不同邮件收件人。
+详见 `docs/runbooks/observability.md` 和 `docs/runbooks/alerting.md`。
 
 ## 已实现
 

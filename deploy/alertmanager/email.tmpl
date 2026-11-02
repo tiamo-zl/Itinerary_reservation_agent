@@ -1,0 +1,66 @@
+{{ define "itinerary.email.subject" -}}
+[{{ .Status | toUpper }}]{{ with .CommonLabels.severity }}[{{ . | toUpper }}]{{ end }} {{ with .CommonLabels.alertname }}{{ . }}{{ else }}Itinerary Alert{{ end }}{{ if gt (len .Alerts) 1 }} ({{ len .Alerts }}){{ end }}
+{{- end }}
+
+{{ define "itinerary.email.text" -}}
+{{ .Status | toUpper }}{{ with .CommonLabels.severity }} [{{ . | toUpper }}]{{ end }}
+Service: {{ with .CommonLabels.service }}{{ . }}{{ else }}unknown{{ end }}
+Alerts: {{ len .Alerts }}
+
+{{ range .Alerts -}}
+- {{ .Labels.alertname }} ({{ .Status }}) started {{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}
+  Summary: {{ .Annotations.summary }}
+  {{ with .Annotations.description }}Description: {{ . }}{{ end }}
+  {{ with .Annotations.runbook_url }}Runbook: {{ . }}{{ end }}
+  {{ with .GeneratorURL }}Prometheus: {{ . }}{{ end }}
+{{ end }}
+Alertmanager: {{ .ExternalURL }}
+{{- end }}
+
+{{ define "itinerary.email.html" -}}
+<!DOCTYPE html>
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #222;">
+  <h2 style="margin-bottom: 4px;">{{ .Status | toUpper }}{{ with .CommonLabels.severity }} · {{ . | toUpper }}{{ end }}</h2>
+  <p style="margin-top: 0; color: #666;">
+    Service: {{ with .CommonLabels.service }}{{ . }}{{ else }}unknown{{ end }} ·
+    Alerts: {{ len .Alerts }}
+  </p>
+  <table cellpadding="8" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%;">
+    <thead>
+      <tr style="background: #f3f4f6; text-align: left;">
+        <th>Alert</th>
+        <th>Status</th>
+        <th>Started</th>
+        <th>Summary</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Alerts }}
+      <tr style="border-top: 1px solid #e5e7eb;">
+        <td><strong>{{ .Labels.alertname }}</strong></td>
+        <td>{{ .Status }}</td>
+        <td>{{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}</td>
+        <td>{{ .Annotations.summary | html }}</td>
+      </tr>
+      {{ if .Annotations.description }}
+      <tr>
+        <td colspan="4" style="color: #444;">{{ .Annotations.description | html }}</td>
+      </tr>
+      {{ end }}
+      {{ if or .Annotations.runbook_url .GeneratorURL }}
+      <tr>
+        <td colspan="4">
+          {{ with .Annotations.runbook_url }}<a href="{{ . }}">Runbook</a>{{ end }}
+          {{ if and .Annotations.runbook_url .GeneratorURL }} · {{ end }}
+          {{ with .GeneratorURL }}<a href="{{ . }}">Prometheus</a>{{ end }}
+        </td>
+      </tr>
+      {{ end }}
+      {{ end }}
+    </tbody>
+  </table>
+  <p style="color: #666; font-size: 12px;">Alertmanager: {{ .ExternalURL }}</p>
+</body>
+</html>
+{{- end }}

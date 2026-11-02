@@ -80,20 +80,20 @@ Grafana：
 
 ## 通知渠道
 
-当前告警规则在 Prometheus 中，尚未配置 Alertmanager 路由。
+已采用 **Prometheus Alertmanager**：
 
-两种选择：
+```text
+Prometheus SLO 告警 → Alertmanager 19093 → 邮件
+```
 
-1. **Grafana 统一告警**
-   - 用 Prometheus 数据源查询同一组规则
-   - 配置 webhook / 邮件 contact point
-   - 适合本地 demo
-2. **Prometheus Alertmanager**
-   - 标准生产方案
-   - 支持分组、抑制、静默、升级
-   - 接企业微信、钉钉、邮件或 PagerDuty
+- `critical`：快速燃烧 → `oncall@itinerary.local`，1 小时重复
+- `warning`：慢速燃烧 → `team@itinerary.local`，4 小时重复
+- 本地邮件由 Mailpit（http://127.0.0.1:8025）捕获
+- 已配置抑制：快速燃烧抑制同一 SLO 的慢速燃烧
+- 未来接企业微信/钉钉只需替换 receiver 的发送方式，
+  SLO 规则和路由标签不变
 
-需要你确定通知渠道后，再配置 contact point/路由。
+详见 `docs/runbooks/alerting.md`。
 
 ## 排查
 

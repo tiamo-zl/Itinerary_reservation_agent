@@ -1,0 +1,110 @@
+# 本地演示配置：Prometheus -> Alertmanager -> Mailpit。
+#
+# 生产环境只需要改这里，不需要改 Prometheus 规则：
+#   smtp_smarthost、smtp_from、smtp_auth_*、smtp_require_tls
+#   email_configs.to
+#
+# 以后接企业微信/钉钉时，把对应 receiver 的 email_configs 换成
+# webhook_configs（或增加一个 relay），路由和严重级别不需要动。
+
+global:
+  resolve_timeout: 5m
+
+  # 本地 Mailpit：SMTP 1025，Web UI http://127.0.0.1:8025
+  smtp_smarthost: 'mailpit:1025'
+  smtp_from: 'alertmanager@itinerary.local'
+  smtp_hello: 'itinerary.local'
+  smtp_require_tls: false
+
+# 生产示例（不要提交真实密码）：
+#   smtp_smarthost: 'smtp.example.com:587'
+#   smtp_from: 'alerts@example.com'
+#   smtp_auth_username: 'alerts@example.com'
+#   smtp_auth_password_file: '/etc/alertmanager/secrets/smtp_password'
+#   smtp_require_tls: true
+
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+route:
+  receiver: 'email-warning'
+  group_by: ['alertname', 'service', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+    # Watchdog 用于验证整条告警链路；每天一封，收不到就说明链路坏了。
+    - matchers:
+        - 'alertname="Watchdog"'
+      receiver: 'email-watchdog'
+      repeat_interval: 24h
+
+    - matchers:
+        - 'severity="critical"'
+      receiver: 'email-critical'
+      repeat_interval: 1h
+
+    - matchers:
+        - 'severity="warning"'
+      receiver: 'email-warning'
+      repeat_interval: 4h
+
+    - matchers:
+        - 'severity="info"'
+      receiver: 'email-info'
+      repeat_interval: 24h
+
+inhibit_rules:
+  # 服务抓取失败时，抑制该服务的其它告警，避免一次故障刷屏。
+  - source_matchers:
+      - 'alertname="ItineraryServiceDown"'
+    target_matchers:
+      - 'severity=~"critical|warning|info"'
+      - 'alertname!="ItineraryServiceDown"'
+      - 'alertname!="Watchdog"'
+    equal: ['service']
+
+  # 快速燃烧已经 page 时，抑制同一 SLO 的慢速燃烧邮件。
+  - source_matchers:
+      - 'alertname="ItinerarySLOBurnFast"'
+    target_matchers:
+      - 'alertname="ItinerarySLOBurnSlow"'
+    equal: ['service', 'slo']
+
+receivers:
+  - name: 'email-critical'
+    email_configs:
+      - to: 'oncall@itinerary.local'
+        send_resolved: true
+        headers:
+          subject: '{{ template "itinerary.email.subject" . }}'
+        html: '{{ template "itinerary.email.html" . }}'
+        text: '{{ template "itinerary.email.text" . }}'
+
+  - name: 'email-warning'
+    email_configs:
+      - to: 'team@itinerary.local'
+        send_resolved: true
+        headers:
+          subject: '{{ template "itinerary.email.subject" . }}'
+        html: '{{ template "itinerary.email.html" . }}'
+        text: '{{ template "itinerary.email.text" . }}'
+
+  - name: 'email-info'
+    email_configs:
+      - to: 'digest@itinerary.local'
+        send_resolved: true
+        headers:
+          subject: '{{ template "itinerary.email.subject" . }}'
+        html: '{{ template "itinerary.email.html" . }}'
+        text: '{{ template "itinerary.email.text" . }}'
+
+  - name: 'email-watchdog'
+    email_configs:
+      - to: 'platform@itinerary.local'
+        send_resolved: true
+        headers:
+          subject: '{{ template "itinerary.email.subject" . }}'
+        html: '{{ template "itinerary.email.html" . }}'
+        text: '{{ template "itinerary.email.text" . }}'

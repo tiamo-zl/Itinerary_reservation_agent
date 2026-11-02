@@ -1,7 +1,7 @@
 # 生产化改造进度（2026-11-01）
 
 - 分支：`feat/observability-console`
-- 最新提交：镜像 CVE 修复（本条提交）；上一提交：`7d61683 feat: add sampled LLM-as-judge evaluation`
+- 最新提交：告警通知（本条提交）；上一提交：`9c3d467 fix: eliminate image HIGH/CRITICAL CVEs`
 - 测试：**153 passed**，覆盖率 **82.5%**
 - 评测：`make eval` 全部通过（66 条金标/回放用例）
 - 类型检查：`make typecheck` 覆盖 application/eval/knowledge/security/tools/workers/repositories
@@ -27,8 +27,8 @@
     approval `a6dbf800114c44a7a58d374954694bcd`，状态 `WAITING_HUMAN`（已用于 worker 停机/并发 resume 混沌）
   - `p0-verify`：已走完审批 → 恢复 → 选择 → `COMPLETED`
 - 观测：
-  - Prometheus 7 个 target `up`
-  - 8 条告警规则已加载
+  - Prometheus 8 个 target `up`（含 Alertmanager）
+  - 26 条规则已加载（16 条告警 + 10 条记录规则）
   - Grafana 已 provision `Itinerary Agent` 与三块生产看板
   - Tempo 主 Trace 已接入，Grafana 已加载 Tempo 数据源
   - SkyWalking Zipkin 查询 API 已启用（19412），双跑兼容
@@ -40,7 +40,7 @@
 |---|---|---|
 | P0 生产基线 | ✅ 100% | PostgreSQL、worker/outbox、鉴权、API 加固、工具治理、保留清理、可观测与 CI 收尾完成 |
 | P1 韧性与深度 | ✅ 100% | 五件套、Higress、HTTP mock、评测、模型网关、知识 CLI、压测/混沌/安全已完成；前端加固按决定不做；镜像 CVE 修复归入 P2 |
-| P2 规模化运维 | 约 80% | Tempo、日志、KPI/看板、SLO、badcase、数据集、近线评估、LLM judge、镜像 CVE 已完成；剩余告警通知渠道与控制台退役 |
+| P2 规模化运维 | 约 85% | Tempo、日志、KPI/看板、SLO、badcase、数据集、近线评估、LLM judge、镜像 CVE、告警通知已完成；剩余控制台退役 |
 
 ## P0 明细
 
@@ -81,7 +81,7 @@
 - worker 就绪检查包含 `retention`；指标 `itinerary_retention_deleted_rows_total`。
 - 新增 outbox 积压 gauge、工具调用/延迟指标。
 - `deploy/prometheus/alerts.yml`：服务不可用、5xx、P95 延迟、模型 fallback、outbox 积压、工具错误、限流。
-- 告警已挂载到共享 Prometheus（`/etc/prometheus/rules/itinerary-alerts.yml`），`/api/v1/rules` 可见 8 条规则。
+- 告警已挂载到共享 Prometheus（`/etc/prometheus/rules/itinerary-alerts.yml`），`/api/v1/rules` 可见 26 条规则（16 条告警 + 10 条记录规则）。
 
 ## P1 进展
 
@@ -116,6 +116,8 @@
 - Service Health 已加入 SLO availability、1h/6h 燃烧率、审批恢复 P95
 - OTel Collector：4317 / 4318 / 8889
 - Prometheus：19090（已加载告警）
+- Alertmanager：19093（critical/warning/info 分级邮件路由，当前使用 163 SMTP）
+- Mailpit：8025（Web）/ 1025（SMTP，本地回退收件箱）
 - Grafana：13000
 - SkyWalking UI：18080
 - Kibana：5601
@@ -147,6 +149,8 @@
 3. **镜像 CVE**：已改用 Alpine 运行镜像、移除运行期 pip 和无用的 SQLite 依赖；Trivy 扫描为 **0 HIGH/CRITICAL**（修复前 43）。需保留定期重建基础镜像的节奏，跟踪新 CVE。详见 `docs/status/security-report-2026-11-02.md`。
 4. Langfuse 与业务各有一套 Postgres/Redis，这是有意的故障域隔离，不建议合并。
 5. `mock-idp` 仅 JWT 调试需要，可随时停止。
+6. 告警当前是单 Alertmanager + 邮件单渠道；SMTP 故障时告警可能丢失，
+   生产需增加 IM/电话或外部 dead-man's switch。详见 `docs/runbooks/alerting.md`。
 
 ## 人工验收
 
@@ -177,7 +181,7 @@ cd web && npm run build
 - `mypy`（CI 范围，含 eval/knowledge）：通过
 - `pytest`：153 passed，82.5% 覆盖率
 - `make eval`：全部 suite 通过
-- Prometheus：8 条告警规则已加载
+- Prometheus：26 条规则已加载（16 条告警 + 10 条记录规则）
 
 ## 评测金标集（P1）
 
@@ -207,7 +211,8 @@ cd web && npm run build
 | `X-Trace-Id` | ✅ API/SSE 返回；工单与日志可用同一连接键 |
 | 业务 KPI 导出 | ✅ 完成：任务/审批/badcase 状态、完成率、badcase 率、审批时延 |
 | Grafana 三块看板 | ✅ Service Health / Agent Quality / Business Funnel |
-| SLO/燃烧率告警 | ✅ 99.5% SLO、10 条记录规则、5 条 SLO 告警；通知渠道待定 |
+| SLO/燃烧率告警 | ✅ 99.5% SLO、10 条记录规则、5 条 SLO 告警 |
+| 告警通知渠道 | ✅ Alertmanager + 163 邮件；critical/warning/info 分级路由，SMTP 25 + STARTTLS，投递已验证；授权码仅存共享栈 secret |
 | Badcase 自动导出 / 工单 | ✅ 工单编号/SLA、triage 字段、关闭约束、merge 导出 |
 | 数据集版本化/拆分 | ✅ dataset_version、golden/regression/holdout、holdout 独立运行 |
 | 近线质量评估 | ✅ 抽样最近任务、确定性检查、quality_findings、指标/看板/API |
@@ -268,8 +273,8 @@ cd web && npm run build
 
 ## 建议下一步（P2）
 
-1. 配置告警通知渠道（Grafana contact point / Alertmanager + 企业微信/钉钉/邮件）。
-2. 控制台双跑退役与产品化后台/工单集成（ADR 0006）。
-3. 把镜像构建 + Trivy HIGH/CRITICAL 门禁接入 CI。
-4. 定期重建 Alpine 基础镜像，跟踪新 CVE。
+1. 控制台双跑退役与产品化后台/工单集成（ADR 0006）。
+2. 把镜像构建 + Trivy HIGH/CRITICAL 门禁接入 CI。
+3. 定期重建 Alpine 基础镜像，跟踪新 CVE。
+4. 告警升级：接企业微信/钉钉 relay，critical 增加电话/短信。
 5. 可选：真实 OIDC/SSO、密钥轮换、mTLS、字段级加密、审计导出。

@@ -10,6 +10,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }} 抓取失败"
           description: "Prometheus 连续 2 分钟无法抓取 {{ $labels.instance }}。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/p0-acceptance.md"
 
       - alert: ItineraryHighErrorRate
         expr: |
@@ -24,6 +25,7 @@ groups:
         annotations:
           summary: "HTTP 5xx 比例超过 5%"
           description: "最近 5 分钟 5xx 比例持续高于 5%，检查 API 日志与依赖状态。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/observability.md"
 
       - alert: ItineraryHighLatency
         expr: |
@@ -39,6 +41,7 @@ groups:
         annotations:
           summary: "HTTP P95 延迟超过 2 秒"
           description: "最近 5 分钟 P95 延迟持续超过 2 秒，检查模型/数据库/Redis。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/observability.md"
 
       - alert: ItineraryModelFallbackSpike
         expr: |
@@ -53,6 +56,7 @@ groups:
         annotations:
           summary: "模型主备切换比例超过 20%"
           description: "主模型可能不可用或持续超时，检查 provider 状态与 API Key。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/model-gateway.md"
 
       - alert: ItineraryModelCircuitOpen
         expr: max by (provider) (itinerary_model_circuit_open) == 1
@@ -63,6 +67,7 @@ groups:
         annotations:
           summary: "{{ $labels.provider }} 模型熔断已打开"
           description: "连续失败达到阈值，当前请求应走备用提供方；检查主模型可用性。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/model-gateway.md"
 
       - alert: ItineraryOutboxBacklog
         expr: itinerary_outbox_backlog > 100
@@ -73,6 +78,7 @@ groups:
         annotations:
           summary: "Outbox 积压超过 100"
           description: "审批恢复事件持续积压，检查 worker 是否存活/是否出现 dead 事件。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/p0-acceptance.md"
 
       - alert: ItineraryToolErrorSpike
         expr: sum(rate(itinerary_tool_calls_total{status="error"}[5m])) > 0.2
@@ -83,6 +89,7 @@ groups:
         annotations:
           summary: "工具错误速率升高"
           description: "检查 TOOL_TIMEOUT/TOOL_UNAVAILABLE/TOOL_BAD_RESPONSE 的分类计数。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/load-chaos-security.md"
 
       - alert: ItineraryRateLimitSpike
         expr: sum(rate(itinerary_rate_limited_total[5m])) > 1
@@ -93,6 +100,7 @@ groups:
         annotations:
           summary: "限流触发频率升高"
           description: "可能有客户端异常重试或容量不足，检查调用方与限流阈值。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/load-chaos-security.md"
 
   - name: itinerary-slo-recording
     interval: 30s
@@ -164,6 +172,7 @@ groups:
         annotations:
           summary: "SLO 快速燃烧：1h 燃烧率 > 14.4"
           description: "按当前速度约 2 天会耗尽 28 天错误预算，检查 5xx 与依赖。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/slo.md"
 
       - alert: ItinerarySLOBurnSlow
         expr: |
@@ -180,6 +189,7 @@ groups:
         annotations:
           summary: "SLO 慢速燃烧：6h 燃烧率 > 6"
           description: "错误预算消耗持续偏快，检查错误趋势与容量。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/slo.md"
 
       - alert: ItineraryApprovalRecoverySlow
         expr: itinerary:slo_approval_recovery_p95:10m > 10
@@ -191,6 +201,7 @@ groups:
         annotations:
           summary: "审批恢复 P95 超过 10 秒"
           description: "检查 worker、outbox backlog、数据库与 Checkpoint。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/slo.md"
 
       - alert: ItineraryTaskCompletionLow
         expr: |
@@ -205,6 +216,7 @@ groups:
         annotations:
           summary: "任务完成率低于 95%"
           description: "检查 FAILED/CANCELLED/WAITING_* 状态趋势与工具/审批错误。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/p0-acceptance.md"
 
       - alert: ItineraryBadcaseRateHigh
         expr: |
@@ -219,3 +231,39 @@ groups:
         annotations:
           summary: "每千任务 badcase 率超过 50"
           description: "检查 open badcase 分类与最近发布变更。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/badcase-loop.md"
+
+  - name: itinerary-alerting
+    rules:
+      # 心跳告警：永远 firing。收不到它的邮件，说明告警链路本身有问题。
+      - alert: Watchdog
+        expr: vector(1)
+        labels:
+          severity: none
+          service: itinerary-agent
+        annotations:
+          summary: "告警链路心跳"
+          description: "该告警应当持续 firing；如果不再收到邮件，检查 Prometheus、Alertmanager 与 SMTP。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/alerting.md"
+
+      - alert: AlertmanagerDown
+        expr: up{job="alertmanager"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: alertmanager
+        annotations:
+          summary: "Alertmanager 抓取失败"
+          description: "Prometheus 连续 5 分钟无法抓取 Alertmanager；告警可能无法投递。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/alerting.md"
+
+      - alert: AlertmanagerNotificationsFailing
+        expr: rate(alertmanager_notifications_failed_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: alertmanager
+        annotations:
+          summary: "Alertmanager 通知发送失败"
+          description: "检查 Alertmanager 日志、SMTP/Webhook 连通性和接收方配置。"
+          runbook_url: "https://github.com/tiamo-zl/Itinerary_reservation_agent/blob/main/docs/runbooks/alerting.md"
