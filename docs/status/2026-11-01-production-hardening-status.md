@@ -2,7 +2,7 @@
 
 - 分支：`feat/observability-console`
 - 最新提交：`bf06c79 feat: complete the P1 gateway, mock, eval and model stack`
-- 测试：**134 passed**，覆盖率 **83.8%**
+- 测试：**138 passed**，覆盖率 **83.8%**
 - 评测：`make eval` 全部通过（66 条金标/回放用例）
 - 类型检查：`make typecheck` 覆盖 application/eval/knowledge/security/tools/workers/repositories
 - 默认运行模式：`MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`
@@ -24,20 +24,21 @@
 
 - 演示数据：
   - `p0-manual`：task `85bf6eefa5704e7b8bb886bb0ec3d17e`，trace `p0-manual-trace`，
-    approval `a6dbf800114c44a7a58d374954694bcd`，状态 `WAITING_APPROVAL`
+    approval `a6dbf800114c44a7a58d374954694bcd`，状态 `WAITING_HUMAN`（已用于 worker 停机/并发 resume 混沌）
   - `p0-verify`：已走完审批 → 恢复 → 选择 → `COMPLETED`
 - 观测：
   - Prometheus 7 个 target `up`
   - 8 条告警规则已加载
   - Grafana `Itinerary Agent` 看板已 provision
-  - SkyWalking 服务目录仍为空（原始 span 在 ES）
+  - SkyWalking Zipkin 查询 API 已启用（19412），服务目录可查
+  - Horizon 原生服务目录仍为空（Zipkin 兼容数据设计如此）
 
 ## 总体进度
 
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | P0 生产基线 | ✅ 100% | PostgreSQL、worker/outbox、鉴权、API 加固、工具治理、保留清理、可观测与 CI 收尾完成 |
-| P1 韧性与深度 | 约 75% | 五件套、Higress、HTTP mock、评测、模型网关、知识 CLI 已完成；前端加固按决定不做；压测/混沌/安全未开始 |
+| P1 韧性与深度 | 约 90% | 五件套、Higress、HTTP mock、评测、模型网关、知识 CLI 已完成；前端加固按决定不做；压测/混沌/安全已完成（依赖/镜像扫描待做） |
 | P2 规模化运维 | 0% | 未开始 |
 
 ## P0 明细
@@ -52,7 +53,7 @@
 | W5 模型网关 | ✅ 100% | fallback、结构化校验/修复、成本账本、缓存、超时；P1 已补真流式、共享熔断、prompt 注册表、任务预算 | — |
 | W6 工具治理 | ✅ 100% | 输入/输出 schema、超时、required_scopes、错误分类、工具指标、guard/审批/下单/幂等回放审计 | — |
 | W7 可观测 | ✅ 100% | OTel、JSON 日志、Prometheus 指标、Postgres trace 投影、五件套、告警规则接入共享 Prometheus | SkyWalking 服务目录为空属外部栈限制，见下 |
-| W8 测试/CI/文档 | ✅ 100% | 134 tests、83.8% 覆盖率、PG 测试库、ruff、mypy（新模块）、CI、ADR、Runbook | CI 尚未在 GitHub 实际运行 |
+| W8 测试/CI/文档 | ✅ 100% | 138 tests、83.8% 覆盖率、PG 测试库、ruff、mypy（新模块）、CI、ADR、Runbook | CI 尚未在 GitHub 实际运行 |
 
 ## 本轮（P0 收尾）完成项
 
@@ -85,14 +86,14 @@
 
 | 项目 | 状态 |
 |---|---|
-| 五件套可观测 | ✅ 基本完成：OTel Collector → SkyWalking/Langfuse，ELK，Prometheus/Grafana |
+| 五件套可观测 | ✅ 完成：OTel Collector → SkyWalking（Zipkin API）/Langfuse，ELK，Prometheus/Grafana |
 | Higress 网关 | ✅ 完成：`/chat` 等业务路径直连 API，其余走 Web；`make higress-up` 幂等配置 |
 | HTTP mock 服务 + 真实适配器 | ✅ 完成：users/inventory/approval/booking；超时/重试/trace 透传/幂等回放契约测试 |
 | 评测金标集 | ✅ 完成：slot/policy/retrieval/approval/prompt/badcase 六类；阈值进 CI |
 | 模型网关深度 | ✅ 完成：真流式、Redis 共享熔断、prompt 版本注册表、任务预算、fallback/校验/成本 |
 | 知识入库 CLI / 重建 | ✅ 完成：ingest/reindex/check；结构化入库、pg_trgm 重建、Milvus 重建、一致性审计 |
 | 前端鉴权/错误边界/SSE 重连/测试 | ⏭ 按决定不做 |
-| 压测/混沌/安全 | ❌ 未开始 |
+| 压测/混沌/安全 | ✅ 完成：k6 20/50/100 阶梯、PG/Redis/worker/resume 混沌、Toxiproxy、安全回归；依赖/镜像扫描待做 |
 
 ### 范围决定：前端加固不纳入当前 P1
 
@@ -136,7 +137,7 @@
 
 ## 已知限制
 
-1. **SkyWalking 服务目录为空**：`sw_zipkin_span-*` 已有约 9.8k 文档，但 `sw_segment-*` 为 0，`getAllServices` 返回空。SkyWalking 11 的 OTLP/Zipkin trace 入库没有生成 segment；原始 span 可在 Elasticsearch/Kibana 中查询。已在 Runbook 记录，属于外部栈限制，不影响业务 Trace（Postgres 投影 + Langfuse 可用）。
+1. **SkyWalking 原生服务目录为空**：OTLP trace 按设计写入 `sw_zipkin_span-*`，不生成 `sw_segment`。已启用 `SW_QUERY_ZIPKIN`，通过 `http://127.0.0.1:19412/zipkin/api/v2/services` 查询服务/span/trace；Horizon 原生 UI 不展示 Zipkin 数据。详见 `docs/runbooks/skywalking.md`。
 2. **mypy 渐进覆盖**：application/eval/knowledge/security/tools/workers/repositories 通过；orchestration/infra 容器等旧模块尚未纳入严格检查，`make typecheck` 与 CI 使用同一范围。
 3. Langfuse 与业务各有一套 Postgres/Redis，这是有意的故障域隔离，不建议合并。
 4. `mock-idp` 仅 JWT 调试需要，可随时停止。
@@ -168,7 +169,7 @@ cd web && npm run build
 
 - `ruff check src tests`：通过
 - `mypy`（CI 范围，含 eval/knowledge）：通过
-- `pytest`：134 passed，83.8% 覆盖率
+- `pytest`：138 passed，83.8% 覆盖率
 - `make eval`：全部 suite 通过
 - Prometheus：8 条告警规则已加载
 
@@ -208,7 +209,35 @@ cd web && npm run build
 - Runbook：`docs/runbooks/knowledge.md`
 - 已用 demo fixture 实测 ingest/check/reindex 通过
 
+## 压测/混沌/安全（P1）
+
+- k6 脚本：`load/k6/{smoke,chat,mixed}.js`，`make load-*`
+- Toxiproxy profile：`make chaos-up`，`scripts/chaos/toxiproxy.sh`
+- 混沌脚本：`scripts/chaos/run.sh {pg,redis,worker,concurrent-resume}`
+- 安全回归：`tests/test_security.py` 4 条
+- 已通过：PG/Redis 降级、worker 停机恢复、并发 resume、Toxiproxy 延迟注入
+- k6 阶梯已完成：只读 100 VU 263.7 RPS / P95 207ms；chat 100 VU 26.8 RPS / P95 3.1s，0 错误
+- 报告：`docs/status/load-report-2026-11-01.md`
+- Runbook：`docs/runbooks/load-chaos-security.md`
+
+## 依赖与镜像安全
+
+- `make audit`：Python / 前端 / 镜像统一扫描入口
+- 前端生产依赖：0 vulnerabilities
+- 前端全部依赖：7 moderate，全部在 dev 依赖链
+- Python：待安装 `pip-audit`
+- 镜像：待安装 `trivy` 或登录 Docker Scout
+- 报告：`docs/status/security-report-2026-11-02.md`
+
+## CI
+
+- `make ci` = lint + typecheck + test + eval
+- GitHub Actions 已定义，但仓库在 Gitee，需要启用 Gitee Go 或镜像仓库
+- Runbook：`docs/runbooks/ci.md`
+
 ## 建议下一步（P1）
 
-1. 压测 / 混沌 / 安全测试（可直接复用 `X-Mock-Fault`）。
-2. 视需要修复或替换 SkyWalking 服务目录查询。
+1. 安装 pip-audit/trivy，执行并修复依赖/镜像扫描。
+2. 启用 Gitee Go 或 GitHub 镜像 CI。
+3. 视需要修复或替换 SkyWalking 服务目录查询。
+4. 进入 P2：备份/恢复演练、SLO/告警、PgBouncer、多副本。

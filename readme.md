@@ -94,7 +94,9 @@ HTTP 模式覆盖用户、库存、审批、下单；超时/重试/trace 透传�
 设计取舍见 `docs/adr/`，运维步骤见 `docs/runbooks/`。
 人工验收与观测观察方法见 `docs/runbooks/p0-acceptance.md`，
 模型流式/熔断/prompt 版本见 `docs/runbooks/model-gateway.md`，
-制度入库/重建/检查见 `docs/runbooks/knowledge.md`。
+制度入库/重建/检查见 `docs/runbooks/knowledge.md`，
+压测/混沌/安全见 `docs/runbooks/load-chaos-security.md`，
+SkyWalking Zipkin 查询见 `docs/runbooks/skywalking.md`。
 
 ## 五件套可观测
 
@@ -104,7 +106,8 @@ make obs-up    # 自动读取 Langfuse key，启动 core + observability
 
 - Grafana：http://127.0.0.1:13000（monitoring-stack，含 `Itinerary Agent` 看板）
 - Prometheus：http://127.0.0.1:19090（含 `itinerary-agent` 告警规则）
-- SkyWalking UI：http://127.0.0.1:18080（服务目录受限，见 Runbook）
+- SkyWalking UI：http://127.0.0.1:18080
+- SkyWalking Zipkin API：http://127.0.0.1:19412/zipkin/api/v2/services（服务目录查询）
 - Kibana：http://127.0.0.1:5601（data stream `logs-itinerary`）
 - Langfuse：http://127.0.0.1:3030
 
