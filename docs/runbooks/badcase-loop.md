@@ -103,7 +103,7 @@ make badcase-export ARGS="--merge tests/eval/cases/badcase_cases.jsonl"
 输出格式：
 
 ```json
-{"id":"badcase-<id>","suite":"policy","source_trace_id":"...","case":{...}}
+{"id":"badcase-<id>","suite":"policy","split":"regression","source_trace_id":"...","case":{...}}
 ```
 
 ## 5. CI 门禁

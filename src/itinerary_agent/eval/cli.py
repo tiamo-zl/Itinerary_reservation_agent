@@ -12,9 +12,14 @@ import json
 import sys
 from pathlib import Path
 
-from itinerary_agent.eval.loader import DEFAULT_CASES_DIR, DEFAULT_THRESHOLDS
+from itinerary_agent.eval.loader import (
+    DEFAULT_CASES_DIR,
+    DEFAULT_THRESHOLDS,
+    SPLITS,
+)
 from itinerary_agent.eval.runner import (
     check_thresholds,
+    dataset_metadata,
     load_thresholds,
     render_summary,
     run_all,
@@ -34,6 +39,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--suite", action="append", default=None,
         help="只运行指定 suite（可重复）",
+    )
+    parser.add_argument(
+        "--split", action="append", choices=list(SPLITS), default=None,
+        help="只运行指定 split（可重复）；默认 golden+regression",
     )
     parser.add_argument(
         "--json", action="store_true", help="输出机器可读 JSON",
@@ -59,7 +68,9 @@ def _serialize(results) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    results = asyncio.run(run_all(args.cases_dir))
+    splits = set(args.split) if args.split else {"golden", "regression"}
+    meta = dataset_metadata(args.cases_dir)
+    results = asyncio.run(run_all(args.cases_dir, splits=splits))
     if args.suite:
         results = {
             name: result for name, result in results.items()
@@ -76,11 +87,17 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.json:
         print(json.dumps({
+            "dataset_version": meta.get("version", "unknown"),
+            "splits": sorted(splits),
             "results": _serialize(results),
             "threshold_failures": failures,
             "passed": not failures,
         }, ensure_ascii=False, indent=2))
     else:
+        print(
+            f"dataset={meta.get('version', 'unknown')} "
+            f"splits={','.join(sorted(splits))}"
+        )
         print(render_summary(results))
         if failures:
             print("\n阈值未通过：")

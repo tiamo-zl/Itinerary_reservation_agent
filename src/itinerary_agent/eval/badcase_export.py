@@ -26,6 +26,7 @@ def build_wrapper(row: dict) -> dict:
     return {
         "id": f"badcase-{row['badcase_id']}",
         "suite": row["regression_suite"],
+        "split": "regression",
         "case": case,
         "source_trace_id": row.get("trace_id"),
     }

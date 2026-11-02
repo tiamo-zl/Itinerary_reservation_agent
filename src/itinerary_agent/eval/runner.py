@@ -6,6 +6,7 @@ from itinerary_agent.eval.loader import (
     DEFAULT_CASES_DIR,
     DEFAULT_THRESHOLDS,
     load_cases,
+    load_dataset,
     load_json,
 )
 from itinerary_agent.eval.suites import (
@@ -20,8 +21,13 @@ from itinerary_agent.eval.suites import (
 )
 
 
-async def run_all(cases_dir: Path = DEFAULT_CASES_DIR) -> dict[str, SuiteResult]:
-    cases = load_cases(cases_dir)
+async def run_all(
+    cases_dir: Path = DEFAULT_CASES_DIR,
+    splits: set[str] | None = None,
+) -> dict[str, SuiteResult]:
+    if splits is None:
+        splits = {"golden", "regression"}
+    cases = load_cases(cases_dir, splits=splits)
     kb = load_retrieval_kb(cases_dir)
     results = {
         "slot": evaluate_slots(cases["slot"]),
@@ -43,6 +49,9 @@ def check_thresholds(results: dict[str, SuiteResult],
             failures.append(f"{suite}: suite missing")
             continue
         result = results[suite]
+        if result.total == 0:
+            # split 过滤后某些 suite 为空是正常情况。
+            continue
         for metric, minimum in required.items():
             actual = result.metrics.get(metric)
             if actual is None:
@@ -56,6 +65,10 @@ def check_thresholds(results: dict[str, SuiteResult],
 
 def load_thresholds(path: Path = DEFAULT_THRESHOLDS) -> dict:
     return load_json(path)
+
+
+def dataset_metadata(cases_dir: Path = DEFAULT_CASES_DIR) -> dict:
+    return load_dataset(cases_dir)
 
 
 def render_summary(results: dict[str, SuiteResult]) -> str:

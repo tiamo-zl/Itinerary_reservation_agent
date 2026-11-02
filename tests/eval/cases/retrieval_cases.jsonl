@@ -8,3 +8,4 @@
 {"id":"retrieval-no-seed","category":"insufficient","query":"量子计算采购","dense_ids":[],"expected":[],"expected_insufficient":true}
 {"id":"retrieval-city-tier","category":"keyword","query":"杭州","dense_ids":[],"expected":["c9"],"expected_insufficient":false}
 {"id":"retrieval-flight-reference","category":"reference","query":"机票标准","dense_ids":[],"expected":["c3","c7"],"expected_insufficient":false}
+{"id":"retrieval-holdout-flight","split":"holdout","category":"reference","query":"机票标准","dense_ids":[],"expected":["c3","c7"],"expected_insufficient":false}

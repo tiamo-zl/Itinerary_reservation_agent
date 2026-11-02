@@ -2,7 +2,7 @@
 
 - 分支：`feat/observability-console`
 - 最新提交：`6347b72 fix: isolate config defaults test from CI environment`
-- 测试：**138 passed**，覆盖率 **83.8%**
+- 测试：**144 passed**，覆盖率 **83.2%**
 - 评测：`make eval` 全部通过（66 条金标/回放用例）
 - 类型检查：`make typecheck` 覆盖 application/eval/knowledge/security/tools/workers/repositories
 - 默认运行模式：`MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`
@@ -40,7 +40,7 @@
 |---|---|---|
 | P0 生产基线 | ✅ 100% | PostgreSQL、worker/outbox、鉴权、API 加固、工具治理、保留清理、可观测与 CI 收尾完成 |
 | P1 韧性与深度 | ✅ 100% | 五件套、Higress、HTTP mock、评测、模型网关、知识 CLI、压测/混沌/安全已完成；前端加固按决定不做；镜像 CVE 修复归入 P2 |
-| P2 规模化运维 | 约 50% | Tempo、结构化日志、`X-Trace-Id`、KPI/看板、SLO、badcase 工单/导出已接入；镜像 CVE、数据集版本化未完成 |
+| P2 规模化运维 | 约 60% | Tempo、日志、KPI/看板、SLO、badcase 闭环、数据集版本化均已完成；镜像 CVE 未修复 |
 
 ## P0 明细
 
@@ -54,7 +54,7 @@
 | W5 模型网关 | ✅ 100% | fallback、结构化校验/修复、成本账本、缓存、超时；P1 已补真流式、共享熔断、prompt 注册表、任务预算 | — |
 | W6 工具治理 | ✅ 100% | 输入/输出 schema、超时、required_scopes、错误分类、工具指标、guard/审批/下单/幂等回放审计 | — |
 | W7 可观测 | ✅ 100% | OTel、JSON 日志、Prometheus 指标、Postgres trace 投影、五件套、告警规则接入共享 Prometheus | SkyWalking 原生服务目录为空，已用 Zipkin API 查询 |
-| W8 测试/CI/文档 | ✅ 100% | 138 tests、83.8% 覆盖率、PG 测试库、ruff、mypy（新模块）、GitHub Actions 实际运行通过、ADR、Runbook | — |
+| W8 测试/CI/文档 | ✅ 100% | 138 tests、83.2% 覆盖率、PG 测试库、ruff、mypy（新模块）、GitHub Actions 实际运行通过、ADR、Runbook | — |
 
 ## 本轮（P0 收尾）完成项
 
@@ -175,7 +175,7 @@ cd web && npm run build
 
 - `ruff check src tests`：通过
 - `mypy`（CI 范围，含 eval/knowledge）：通过
-- `pytest`：138 passed，83.8% 覆盖率
+- `pytest`：144 passed，83.2% 覆盖率
 - `make eval`：全部 suite 通过
 - Prometheus：8 条告警规则已加载
 
@@ -194,6 +194,8 @@ cd web && npm run build
 
 - 评测 runner 在 `src/itinerary_agent/eval/`
 - 用例与阈值在 `tests/eval/`
+- 数据集版本：`tests/eval/dataset.json`（2026.11.02）
+- 默认 CI 只跑 golden+regression；`make eval-holdout` 跑 holdout
 - `pytest` 和 CI 都执行同一套阈值
 
 ## P2 进展
@@ -207,7 +209,7 @@ cd web && npm run build
 | Grafana 三块看板 | ✅ Service Health / Agent Quality / Business Funnel |
 | SLO/燃烧率告警 | ✅ 99.5% SLO、10 条记录规则、5 条 SLO 告警；通知渠道待定 |
 | Badcase 自动导出 / 工单 | ✅ 工单编号/SLA、triage 字段、关闭约束、merge 导出 |
-| 数据集版本化/拆分 | ❌ 未开始 |
+| 数据集版本化/拆分 | ✅ dataset_version、golden/regression/holdout、holdout 独立运行 |
 | 镜像 CVE 修复 | ❌ 未开始 |
 
 ## 模型网关深度（P1）

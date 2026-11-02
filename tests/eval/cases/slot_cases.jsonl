@@ -14,3 +14,4 @@
 {"id":"slot-next-sunday","today":"2026-10-21","raw":{"destination":"广州","departure_date":"下周日","duration_days":2},"expected":{"destination_city":"广州","start_date":"2026-11-01","start_weekday":6,"duration_days":1}}
 {"id":"slot-today","today":"2026-10-21","raw":{"destination":"北京","departure_date":"今天"},"expected":{"destination_city":"北京","start_date":"2026-10-21"}}
 {"id":"slot-default-needs","today":"2026-10-21","raw":{"destination":"北京","departure_date":"2026-11-03"},"expected":{"need_flight":true,"need_hotel":true}}
+{"id":"slot-holdout-this-sunday","split":"holdout","today":"2026-10-21","raw":{"destination":"苏州","departure_date":"本周日","duration_days":2},"expected":{"destination_city":"苏州","start_date":"2026-10-25","start_weekday":6,"duration_days":1}}

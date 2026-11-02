@@ -80,6 +80,7 @@ async def test_badcase_ticket_sla_and_export(tmp_path):
     assert len(wrappers) == 1
     wrapper = wrappers[0]
     assert wrapper["suite"] == "policy"
+    assert wrapper["split"] == "regression"
     assert wrapper["source_trace_id"] == "trace-1"
     assert wrapper["case"]["id"] == "replay-policy-l2-hotel-800"
 

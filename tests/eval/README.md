@@ -10,11 +10,22 @@ make eval
 PYTHONPATH=src uv run python -m itinerary_agent.eval.cli
 ```
 
+默认只跑 `golden + regression`，`holdout` 不参与常规门禁：
+
+```bash
+make eval-holdout
+# 或
+PYTHONPATH=src uv run python -m itinerary_agent.eval.cli --split holdout
+```
+
 只跑某个 suite：
 
 ```bash
 PYTHONPATH=src uv run python -m itinerary_agent.eval.cli --suite retrieval
 ```
+
+数据集版本在 `tests/eval/dataset.json`。每条结果会记录
+`dataset_version` 和 `split`。
 
 输出 JSON（CI 归档）：
 
@@ -35,10 +46,15 @@ tests/eval/
     retrieval_kb.json       # 检索评测共享条款树/边/表格
     approval_cases.jsonl    # guard 准入与 revision 修改
     prompt_cases.jsonl      # 按 prompt_version 分组的记录输出 A/B
-    badcase_cases.jsonl     # badcase 回放（内嵌 case）
+    badcase_cases.jsonl     # badcase 回放（内嵌 case，默认 regression）
     scenario_cases.jsonl    # 12 个端到端场景清单
+  dataset.json              # 数据集版本与默认 split
   thresholds.json           # CI 阈值
 ```
+
+每个 case 可以显式写 `"split": "golden|regression|holdout"`；
+未写时按 `dataset.json` 的 `default_split` 注入。
+badcase wrapper 由导出 CLI 自动标记为 `regression`。
 
 ## 指标
 

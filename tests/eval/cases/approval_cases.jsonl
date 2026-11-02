@@ -12,3 +12,4 @@
 {"id":"approval-submit-allowed","action":"submit_approval","status":"EXECUTING","policy_passed":false,"requires_approval":true,"expected_code":"OK"}
 {"id":"revision-first-amendment","kind":"amendment","revision":0,"amended_request":{"destination_city":"上海","start_date":"2026-11-10","end_date":"2026-11-12"},"expected_revision":1}
 {"id":"revision-second-amendment","kind":"amendment","revision":3,"amended_request":{"destination_city":"广州"},"expected_revision":4}
+{"id":"approval-holdout-approved-book","split":"holdout","action":"book_flight","status":"EXECUTING","policy_passed":false,"requires_approval":true,"approval_status":"approved","confirmed":true,"expected_code":"OK"}
