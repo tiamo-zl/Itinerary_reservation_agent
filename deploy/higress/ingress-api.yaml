@@ -74,6 +74,13 @@ spec:
             apiGroup: networking.higress.io
             kind: McpBridge
             name: default
+      - path: /quality
+        pathType: Prefix
+        backend:
+          resource:
+            apiGroup: networking.higress.io
+            kind: McpBridge
+            name: default
       - path: /healthz
         pathType: Prefix
         backend:

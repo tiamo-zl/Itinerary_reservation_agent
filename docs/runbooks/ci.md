@@ -22,7 +22,7 @@ make eval
 - 主仓库在 Gitee
 - GitHub 镜像：https://github.com/tiamo-zl/Itinerary_reservation_agent
 - GitHub Actions 已实际运行通过：
-  https://github.com/tiamo-zl/Itinerary_reservation_agent/actions/runs/41388031769
+  https://github.com/tiamo-zl/Itinerary_reservation_agent/actions/runs/41438354389
 - 后端 job：lint / mypy / migrate / pytest / eval 全部通过
 - 前端 job：构建通过
 

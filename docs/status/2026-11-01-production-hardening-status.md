@@ -257,7 +257,7 @@ cd web && npm run build
 
 - `make ci` = lint + typecheck + test + eval
 - GitHub Actions 已实际运行通过：
-  https://github.com/tiamo-zl/Itinerary_reservation_agent/actions/runs/41388031769
+  https://github.com/tiamo-zl/Itinerary_reservation_agent/actions/runs/41438354389
 - 后端 job：lint / mypy / migrate / pytest / eval 全部通过
 - 前端 job：构建通过
 - Runbook：`docs/runbooks/ci.md`
