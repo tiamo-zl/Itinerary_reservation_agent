@@ -3,7 +3,9 @@ from itinerary_agent.infra.config import Settings
 
 def test_settings_defaults(monkeypatch):
     # 不读取本地 .env，确保测试断言的是代码默认值。
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    # CI 会设置 ENVIRONMENT=test；这里必须清掉，否则测不到代码默认值。
+    for name in ("DEEPSEEK_API_KEY", "ENVIRONMENT", "ADAPTER_MODE", "MODEL_MODE"):
+        monkeypatch.delenv(name, raising=False)
     s = Settings(_env_file=None)
     assert s.environment == "local"
     assert s.database_url.startswith("postgresql://")
