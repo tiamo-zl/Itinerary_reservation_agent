@@ -19,14 +19,14 @@ make eval
 
 ## 当前仓库状态
 
-- 仓库托管在 Gitee
-- `.github/workflows/ci.yml` 已定义 GitHub Actions
-- GitHub Actions 在 Gitee 仓库上不会自动运行
+- 主仓库在 Gitee
+- GitHub 镜像：https://github.com/tiamo-zl/Itinerary_reservation_agent
+- GitHub Actions 已实际运行通过：
+  https://github.com/tiamo-zl/Itinerary_reservation_agent/actions/runs/41388031769
+- 后端 job：lint / mypy / migrate / pytest / eval 全部通过
+- 前端 job：构建通过
 
-因此需要二选一：
-
-1. 在 Gitee 启用 Gitee Go，配置同等流水线；
-2. 保留一个 GitHub 镜像仓库，让 Actions 实际运行。
+Gitee Go 为可选；如需要，可在 Gitee 配置同等流水线。
 
 ## Gitee Go 最小步骤
 

@@ -1,7 +1,7 @@
 # 生产化改造进度（2026-11-01）
 
 - 分支：`feat/observability-console`
-- 最新提交：`bf06c79 feat: complete the P1 gateway, mock, eval and model stack`
+- 最新提交：`6347b72 fix: isolate config defaults test from CI environment`
 - 测试：**138 passed**，覆盖率 **83.8%**
 - 评测：`make eval` 全部通过（66 条金标/回放用例）
 - 类型检查：`make typecheck` 覆盖 application/eval/knowledge/security/tools/workers/repositories
@@ -38,7 +38,7 @@
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | P0 生产基线 | ✅ 100% | PostgreSQL、worker/outbox、鉴权、API 加固、工具治理、保留清理、可观测与 CI 收尾完成 |
-| P1 韧性与深度 | 约 90% | 五件套、Higress、HTTP mock、评测、模型网关、知识 CLI 已完成；前端加固按决定不做；压测/混沌/安全已完成（依赖/镜像扫描待做） |
+| P1 韧性与深度 | ✅ 100% | 五件套、Higress、HTTP mock、评测、模型网关、知识 CLI、压测/混沌/安全已完成；前端加固按决定不做；镜像 CVE 修复归入 P2 |
 | P2 规模化运维 | 0% | 未开始 |
 
 ## P0 明细
@@ -53,7 +53,7 @@
 | W5 模型网关 | ✅ 100% | fallback、结构化校验/修复、成本账本、缓存、超时；P1 已补真流式、共享熔断、prompt 注册表、任务预算 | — |
 | W6 工具治理 | ✅ 100% | 输入/输出 schema、超时、required_scopes、错误分类、工具指标、guard/审批/下单/幂等回放审计 | — |
 | W7 可观测 | ✅ 100% | OTel、JSON 日志、Prometheus 指标、Postgres trace 投影、五件套、告警规则接入共享 Prometheus | SkyWalking 服务目录为空属外部栈限制，见下 |
-| W8 测试/CI/文档 | ✅ 100% | 138 tests、83.8% 覆盖率、PG 测试库、ruff、mypy（新模块）、CI、ADR、Runbook | CI 尚未在 GitHub 实际运行 |
+| W8 测试/CI/文档 | ✅ 100% | 138 tests、83.8% 覆盖率、PG 测试库、ruff、mypy（新模块）、GitHub Actions 实际运行通过、ADR、Runbook | — |
 
 ## 本轮（P0 收尾）完成项
 
@@ -139,8 +139,9 @@
 
 1. **SkyWalking 原生服务目录为空**：OTLP trace 按设计写入 `sw_zipkin_span-*`，不生成 `sw_segment`。已启用 `SW_QUERY_ZIPKIN`，通过 `http://127.0.0.1:19412/zipkin/api/v2/services` 查询服务/span/trace；Horizon 原生 UI 不展示 Zipkin 数据。详见 `docs/runbooks/skywalking.md`。
 2. **mypy 渐进覆盖**：application/eval/knowledge/security/tools/workers/repositories 通过；orchestration/infra 容器等旧模块尚未纳入严格检查，`make typecheck` 与 CI 使用同一范围。
-3. Langfuse 与业务各有一套 Postgres/Redis，这是有意的故障域隔离，不建议合并。
-4. `mock-idp` 仅 JWT 调试需要，可随时停止。
+3. **镜像 CVE**：Trivy 扫描出 43 HIGH/CRITICAL（38 OS + 5 Python）。Python 侧可升级 msgpack/urllib3/setuptools；OS 侧需在 P2 升级基础镜像或定期重建。详见 `docs/status/security-report-2026-11-02.md`。
+4. Langfuse 与业务各有一套 Postgres/Redis，这是有意的故障域隔离，不建议合并。
+5. `mock-idp` 仅 JWT 调试需要，可随时停止。
 
 ## 人工验收
 
@@ -232,12 +233,14 @@ cd web && npm run build
 ## CI
 
 - `make ci` = lint + typecheck + test + eval
-- GitHub Actions 已定义，但仓库在 Gitee，需要启用 Gitee Go 或镜像仓库
+- GitHub Actions 已实际运行通过：
+  https://github.com/tiamo-zl/Itinerary_reservation_agent/actions/runs/41388031769
+- 后端 job：lint / mypy / migrate / pytest / eval 全部通过
+- 前端 job：构建通过
 - Runbook：`docs/runbooks/ci.md`
 
 ## 建议下一步（P1）
 
-1. 安装 pip-audit/trivy，执行并修复依赖/镜像扫描。
-2. 启用 Gitee Go 或 GitHub 镜像 CI。
-3. 视需要修复或替换 SkyWalking 服务目录查询。
-4. 进入 P2：备份/恢复演练、SLO/告警、PgBouncer、多副本。
+1. 修复镜像 Python 包 CVE（msgpack / urllib3 / setuptools），重建镜像。
+2. P2：升级基础镜像/定期重建，降低 Debian OS CVE。
+3. P2：备份/恢复演练、SLO/告警、PgBouncer、多副本。
