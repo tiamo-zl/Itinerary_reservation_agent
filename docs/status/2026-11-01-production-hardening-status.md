@@ -40,7 +40,7 @@
 |---|---|---|
 | P0 生产基线 | ✅ 100% | PostgreSQL、worker/outbox、鉴权、API 加固、工具治理、保留清理、可观测与 CI 收尾完成 |
 | P1 韧性与深度 | ✅ 100% | 五件套、Higress、HTTP mock、评测、模型网关、知识 CLI、压测/混沌/安全已完成；前端加固按决定不做；镜像 CVE 修复归入 P2 |
-| P2 规模化运维 | 约 40% | Tempo、结构化日志、`X-Trace-Id`、业务 KPI/看板、SLO/燃烧率已接入；镜像 CVE、badcase/工单闭环未完成 |
+| P2 规模化运维 | 约 50% | Tempo、结构化日志、`X-Trace-Id`、KPI/看板、SLO、badcase 工单/导出已接入；镜像 CVE、数据集版本化未完成 |
 
 ## P0 明细
 
@@ -206,7 +206,7 @@ cd web && npm run build
 | 业务 KPI 导出 | ✅ 完成：任务/审批/badcase 状态、完成率、badcase 率、审批时延 |
 | Grafana 三块看板 | ✅ Service Health / Agent Quality / Business Funnel |
 | SLO/燃烧率告警 | ✅ 99.5% SLO、10 条记录规则、5 条 SLO 告警；通知渠道待定 |
-| Badcase 自动导出 / 工单 | ❌ 未开始 |
+| Badcase 自动导出 / 工单 | ✅ 工单编号/SLA、triage 字段、关闭约束、merge 导出 |
 | 数据集版本化/拆分 | ❌ 未开始 |
 | 镜像 CVE 修复 | ❌ 未开始 |
 

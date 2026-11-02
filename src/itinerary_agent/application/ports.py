@@ -96,6 +96,13 @@ class UnitOfWorkPort(Protocol):
     def transaction(self) -> AbstractAsyncContextManager[object]: ...
 
 
+class TicketPort(Protocol):
+    """工单系统边界；demo 使用本地适配器，生产可接 Gitee/GitHub Issues。"""
+
+    async def create(self, badcase: dict) -> str: ...
+    async def close(self, ticket_ref: str, comment: str) -> None: ...
+
+
 class OutboxRepositoryPort(Protocol):
     async def enqueue(self, aggregate_type: str, aggregate_id: str,
                       event_type: str, payload: dict) -> None: ...

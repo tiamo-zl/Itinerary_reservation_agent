@@ -434,6 +434,7 @@ async def evaluate_badcases(cases: list[dict], cases_dir: Path) -> SuiteResult:
         if not ok:
             failures.append({
                 "id": wrapper["id"], "suite": suite,
+                "source_trace_id": wrapper.get("source_trace_id"),
                 "details": result.failures,
             })
     total = len(cases)

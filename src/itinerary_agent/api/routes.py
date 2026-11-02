@@ -51,6 +51,13 @@ class BadcaseUpdate(BaseModel):
     status: Literal["open", "reproduced", "fixed", "closed"] | None = None
     root_cause: str | None = None
     comment: str | None = None
+    owner: str | None = None
+    sla_due_at: str | None = None
+    ticket_ref: str | None = None
+    regression_suite: Literal[
+        "slot", "policy", "retrieval", "approval", "prompt",
+    ] | None = None
+    regression_case: dict | None = None
 
 
 def build_router(container) -> APIRouter:

@@ -478,9 +478,12 @@ class Container:
                 self.conversation_repo, self.orchestrator
             )
         )
-        self.feedback_service = (
-            self.feedback_service or FeedbackService(self.feedback_repo)
-        )
+        if self.feedback_service is None:
+            from itinerary_agent.infra.ticketing import LocalTicketAdapter
+
+            self.feedback_service = FeedbackService(
+                self.feedback_repo, LocalTicketAdapter()
+            )
 
         # 步骤 3：审批查询 + 决策。
         self.approval_queries = self.approval_queries or ApprovalQueryService(

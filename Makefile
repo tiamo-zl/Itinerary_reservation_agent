@@ -5,7 +5,7 @@ DURATION ?= 30s
 RAMP ?= 20s
 HOLD ?= 60s
 
-.PHONY: db-up db-down db-logs migrate revision api worker idp obs-up obs-down higress-up higress-down demo-seed knowledge-ingest knowledge-reindex knowledge-check chaos-up chaos-down load-smoke load-chat load-read load audit ci test eval lint typecheck web-build smoke
+.PHONY: db-up db-down db-logs migrate revision api worker idp obs-up obs-down higress-up higress-down demo-seed knowledge-ingest knowledge-reindex knowledge-check badcase-export chaos-up chaos-down load-smoke load-chat load-read load audit ci test eval lint typecheck web-build smoke
 
 # 只启动 P0 需要的基础设施，不构建应用镜像。
 db-up:
@@ -60,6 +60,9 @@ knowledge-reindex:
 knowledge-check:
 	PYTHONPATH=src uv run python -m itinerary_agent.knowledge.cli check --json $(ARGS)
 
+badcase-export:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.badcase_export $(ARGS)
+
 chaos-up:
 	docker compose --profile chaos up -d toxiproxy
 
@@ -73,10 +76,6 @@ load-smoke:
 load-chat:
 	@command -v k6 >/dev/null || (echo "k6 not found: brew install k6"; exit 1)
 	k6 run -e VUS=$(VUS) -e DURATION=$(DURATION) load/k6/chat.js
-
-load-read:
-	@command -v k6 >/dev/null || (echo "k6 not found: brew install k6"; exit 1)
-	k6 run -e VUS=$(VUS) -e RAMP=$(RAMP) -e HOLD=$(HOLD) load/k6/read.js
 
 load-read:
 	@command -v k6 >/dev/null || (echo "k6 not found: brew install k6"; exit 1)
