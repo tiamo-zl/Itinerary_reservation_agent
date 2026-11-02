@@ -4,14 +4,12 @@ version = "0.1.0"
 description = "Production-like corporate travel reservation agent demo"
 requires-python = ">=3.13"
 dependencies = [
-  "aiosqlite>=0.20",
   "alembic>=1.20.1",
   "fastapi>=0.115",
   "httpx>=0.28.1",
   "jsonschema>=4.23",
   "langgraph>=0.2",
   "langgraph-checkpoint-postgres>=3.2.0",
-  "langgraph-checkpoint-sqlite>=2.0",
   "openai>=1.40",
   "opentelemetry-exporter-otlp-proto-http>=1.45.2",
   "opentelemetry-instrumentation-fastapi>=0.66b2",

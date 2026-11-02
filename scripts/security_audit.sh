@@ -31,16 +31,18 @@ npm --prefix web audit || true
 
 echo
 echo "== Container image =="
-TRIVY_DB_REPOSITORY="${TRIVY_DB_REPOSITORY:-public.ecr.aws/aquasecurity/trivy-db:2}"
+# GHCR 匿名可拉；public.ecr.aws 在部分网络下会在 5 分钟内超时。
+TRIVY_DB_REPOSITORY="${TRIVY_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-db:2}"
 if command -v trivy >/dev/null 2>&1; then
-  trivy image --severity HIGH,CRITICAL \
+  trivy image --severity HIGH,CRITICAL --timeout 15m \
     --exit-code 1 itinerary-reservation-agent:local || status=1
 elif docker image inspect aquasec/trivy:latest >/dev/null 2>&1; then
-  # 无需 Docker Hub 登录；DB 使用 AWS public ECR 镜像。
+  # 无需 Docker Hub 登录；缓存 DB，避免每次重复下载。
   docker run --rm \
     -e TRIVY_DB_REPOSITORY="$TRIVY_DB_REPOSITORY" \
     -v /var/run/docker.sock:/var/run/docker.sock \
-    aquasec/trivy:latest image --severity HIGH,CRITICAL \
+    -v trivy-cache:/root/.cache/trivy \
+    aquasec/trivy:latest image --severity HIGH,CRITICAL --timeout 15m \
     --exit-code 1 --no-progress itinerary-reservation-agent:local || status=1
 else
   echo "trivy not available. Install: brew install trivy" >&2

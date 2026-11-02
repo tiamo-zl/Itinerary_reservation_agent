@@ -162,8 +162,7 @@ uv run pytest -q tests/test_security.py
 - Toxiproxy：proxy 创建、100ms 延迟注入、清除均通过
 - `tests/test_security.py`：4 passed
 
-待执行：
+已补充：
 
-- k6 阶梯压测（本机 k6 尚未安装）
-- Toxiproxy 与应用端到端降级（需要重启 API 指向 toxiproxy）
-- 依赖/镜像扫描
+- k6 阶梯压测：只读 100 VU 263.7 RPS / P95 207ms；chat 100 VU 26.8 RPS / P95 3.1s，0 错误（见 `docs/status/load-report-2026-11-01.md`）
+- 依赖/镜像扫描：pip-audit 无已知漏洞；Trivy **0 HIGH/CRITICAL**（Alpine 运行镜像）

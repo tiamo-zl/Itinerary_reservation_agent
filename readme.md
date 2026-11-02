@@ -90,6 +90,7 @@ HTTP 模式覆盖用户、库存、审批、下单；超时/重试/trace 透传�
 - 工具治理：schema/超时/required_scopes/错误分类/审计覆盖
 - JSON 日志（Kibana 结构化字段）、`X-Trace-Id`、Prometheus 指标与告警、OTel 接入点
 - Dockerfile、Compose core、GitHub Actions CI
+- 运行镜像基于 Alpine，移除运行期 pip 与未使用的 SQLite 依赖；Trivy HIGH/CRITICAL 为 0
 
 设计取舍见 `docs/adr/`，运维步骤见 `docs/runbooks/`。
 人工验收与观测观察方法见 `docs/runbooks/p0-acceptance.md`，
