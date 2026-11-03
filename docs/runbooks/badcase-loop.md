@@ -9,6 +9,9 @@
 
 ## 1. 创建
 
+也可以直接使用模拟工单页：<http://127.0.0.1:8081/tickets>
+（详见 `docs/runbooks/ticket-page.md`）。
+
 ```bash
 curl -s -X POST http://127.0.0.1:8081/feedback \
   -H 'X-Mock-User: u001' \

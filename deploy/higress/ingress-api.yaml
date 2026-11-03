@@ -67,6 +67,13 @@ spec:
             apiGroup: networking.higress.io
             kind: McpBridge
             name: default
+      - path: /tickets
+        pathType: Prefix
+        backend:
+          resource:
+            apiGroup: networking.higress.io
+            kind: McpBridge
+            name: default
       - path: /badcases
         pathType: Prefix
         backend:

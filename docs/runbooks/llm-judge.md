@@ -103,6 +103,67 @@ Grafana `Itinerary Agent Quality` 已加入：
 - 所有调用写 `llm_calls`，包含 token、成本、provider、prompt_version
 - 任务预算同样生效
 
+## 校准
+
+judge 是主观信号，必须用人工标签校准。当前提供 seeded 基线：
+
+```bash
+make judge-calibrate
+```
+
+- 数据集：`tests/eval/judge_calibration.jsonl`
+- 24 条：12 pass / 12 fail
+- 覆盖：槽位缺失、预算/差标矛盾、候选不一致、审批状态异常、
+  摘要为空、状态不一致
+- 标签来源：`seed`（确定性种子，后续替换为人工标注）
+- 报告：`docs/status/judge-calibration.md`
+- 需要 `MODEL_MODE=live` 和 DeepSeek Key
+
+2026-11-02 seeded 基线（judge v1，DeepSeek）：
+
+```text
+verdict agreement = 0.875
+score MAE         = 0.667
+weighted kappa    = 0.758
+fail recall       = 0.750
+```
+
+3 条 fail 漏判：`fail-missing-destination`、`fail-empty-summary`、
+`fail-no-selection`。judge 倾向从 `options` 推断方案，忽略关键字段/
+summary/selected 为空。建议出 judge v2 时明确这三条硬规则，再重新校准。
+
+报告指标：
+
+| 指标 | 含义 |
+|---|---|
+| verdict agreement | 人工/ judge 的 pass/fail 一致率 |
+| score MAE | 0–5 分平均绝对误差 |
+| quadratic weighted kappa | 分数一致性（考虑评分距离） |
+| fail precision / recall / F1 | 把 fail 当正类 |
+| confusion matrix | 人工 × judge |
+
+可选门禁：
+
+```bash
+uv run python -m itinerary_agent.eval.judge_calibration \
+  --fail-under-agreement 0.85 \
+  --fail-under-kappa 0.6
+```
+
+更换 prompt 版本：
+
+```bash
+uv run python -m itinerary_agent.eval.judge_calibration \
+  --prompt-version v2 --out docs/status/judge-calibration-v2.md
+```
+
+正式校准前：
+
+1. 用真实任务和人工标注替换 seed 标签；
+2. 至少覆盖不同 category / severity；
+3. 达阈值后再把 judge 作为趋势信号，仍不作为 CI 硬门禁；
+4. 每次修改 judge prompt 后重新校准。
+
 ## 问题处理
 
 ### judge pass ratio 下降

@@ -197,6 +197,11 @@ def create_app(container: Container) -> FastAPI:
         # 最小 Web 聊天页；生产会替换成正式前端。
         return FileResponse(Path(__file__).parent / "static" / "chat.html")
 
+    @app.get("/tickets")
+    async def tickets():
+        # 模拟工单系统 demo；后续可替换真实工单适配器。
+        return FileResponse(Path(__file__).parent / "static" / "tickets.html")
+
     # /chat 与 /tasks/*：SSE 流式入口和任务查询。
     app.include_router(build_router(container))
     return app

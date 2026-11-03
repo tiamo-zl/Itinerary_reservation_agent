@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>模拟工单系统</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+           margin: 32px auto; max-width: 960px; color: #222; }
+    h2 { margin-bottom: 4px; }
+    .note { color: #666; margin-top: 0; }
+    form { display: grid; gap: 12px; margin: 24px 0; }
+    label { display: grid; gap: 4px; font-size: 14px; }
+    input, select, textarea { padding: 8px; font: inherit; border: 1px solid #ccc;
+                              border-radius: 4px; }
+    textarea { min-height: 64px; }
+    button { width: fit-content; padding: 8px 18px; font: inherit; cursor: pointer; }
+    #result { margin: 16px 0; padding: 12px; border: 1px solid #ddd;
+              border-radius: 6px; display: none; white-space: pre-wrap; }
+    #result.ok { border-color: #27ae60; background: #f3fbf6; }
+    #result.error { border-color: #c0392b; background: #fdf3f2; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }
+    th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; }
+    th { background: #f5f5f5; }
+    .hint { color: #888; font-size: 12px; }
+  </style>
+</head>
+<body>
+<h2>模拟工单系统</h2>
+<p class="note">
+  演示用：提交后生成 <code>LOCAL-xxxxxxxx</code> 工单并进入 badcase 队列。
+  以后接入 Gitee / GitHub Issues / Jira 时，只替换后端 <code>TicketPort</code>。
+</p>
+
+<form id="ticket-form">
+  <label>trace_id（必填）
+    <input id="trace_id" required placeholder="从聊天响应或 /traces 获取">
+  </label>
+  <label>task_id（可选）
+    <input id="task_id" placeholder="任务 ID">
+  </label>
+  <label>分类
+    <select id="category">
+      <option value="understand">understand</option>
+      <option value="plan">plan</option>
+      <option value="tool">tool</option>
+      <option value="policy">policy</option>
+      <option value="rag">rag</option>
+      <option value="approval">approval</option>
+      <option value="booking">booking</option>
+      <option value="other" selected>other</option>
+    </select>
+  </label>
+  <label>严重级别
+    <select id="severity">
+      <option value="low">low</option>
+      <option value="medium" selected>medium</option>
+      <option value="high">high</option>
+    </select>
+  </label>
+  <label>用户原始需求
+    <textarea id="user_input"></textarea>
+  </label>
+  <label>期望结果
+    <textarea id="expected"></textarea>
+  </label>
+  <label>实际结果
+    <textarea id="actual"></textarea>
+  </label>
+  <label>备注
+    <textarea id="comment"></textarea>
+  </label>
+  <button type="submit">提交工单</button>
+  <span class="hint">当前使用 mock 身份 u001（feedback:write）。</span>
+</form>
+
+<div id="result"></div>
+
+<h3>最近工单（管理员视图，mock u002）</h3>
+<button id="refresh" type="button">刷新</button>
+<table>
+  <thead>
+    <tr><th>ticket_ref</th><th>severity</th><th>category</th><th>status</th>
+        <th>SLA</th><th>owner</th></tr>
+  </thead>
+  <tbody id="rows"><tr><td colspan="6">加载中...</td></tr></tbody>
+</table>
+
+<script>
+const result = document.getElementById('result');
+const rows = document.getElementById('rows');
+
+function show(kind, text) {
+  result.className = kind;
+  result.textContent = text;
+  result.style.display = 'block';
+}
+
+async function loadRecent() {
+  try {
+    const res = await fetch('/badcases?limit=20', {
+      headers: {'X-Mock-User': 'u002'}
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const list = data.badcases || [];
+    rows.innerHTML = list.length
+      ? list.map(row => `
+          <tr>
+            <td>${row.ticket_ref || '-'}</td>
+            <td>${row.severity || '-'}</td>
+            <td>${row.category || '-'}</td>
+            <td>${row.status || '-'}</td>
+            <td>${row.sla_due_at || '-'}</td>
+            <td>${row.owner || '-'}</td>
+          </tr>`).join('')
+      : '<tr><td colspan="6">暂无工单</td></tr>';
+  } catch (err) {
+    rows.innerHTML = `<tr><td colspan="6">加载失败：${err.message}</td></tr>`;
+  }
+}
+
+document.getElementById('ticket-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const payload = {
+    trace_id: document.getElementById('trace_id').value.trim(),
+    task_id: document.getElementById('task_id').value.trim() || null,
+    category: document.getElementById('category').value,
+    severity: document.getElementById('severity').value,
+    user_input: document.getElementById('user_input').value,
+    expected: document.getElementById('expected').value,
+    actual: document.getElementById('actual').value,
+    comment: document.getElementById('comment').value,
+  };
+  try {
+    const res = await fetch('/feedback', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Mock-User': 'u001',
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      show('error', `提交失败：${data.detail || data.message || res.status}`);
+      return;
+    }
+    show('ok', [
+      `工单已进入模拟队列`,
+      `ticket_ref: ${data.ticket_ref}`,
+      `badcase_id: ${data.badcase_id}`,
+      `status: ${data.status}`,
+      `sla_due_at: ${data.sla_due_at}`,
+    ].join('\n'));
+    document.getElementById('ticket-form').reset();
+    await loadRecent();
+  } catch (err) {
+    show('error', `提交失败：${err.message}`);
+  }
+});
+
+document.getElementById('refresh').addEventListener('click', loadRecent);
+loadRecent();
+</script>
+</body>
+</html>

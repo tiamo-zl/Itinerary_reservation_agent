@@ -47,6 +47,9 @@ eval:
 eval-holdout:
 	PYTHONPATH=src uv run python -m itinerary_agent.eval.cli --split holdout
 
+judge-calibrate:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_calibration
+
 lint:
 	uv run ruff check src tests
 

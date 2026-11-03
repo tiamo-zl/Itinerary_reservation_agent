@@ -42,6 +42,7 @@ make higress-up                  # 接入本机已有的 Higress 网关
 ```
 
 - Higress 统一入口：http://127.0.0.1:8081
+- 模拟工单提交页：http://127.0.0.1:8081/tickets
 - Web（Nginx + Vue 构建）：http://127.0.0.1:8080
 - API：http://127.0.0.1:8000
 - Worker：http://127.0.0.1:8001
@@ -104,8 +105,10 @@ Tempo 接入见 `docs/runbooks/tempo.md`，
 SLO/燃烧率见 `docs/runbooks/slo.md`，
 告警通知见 `docs/runbooks/alerting.md`，
 Badcase 闭环见 `docs/runbooks/badcase-loop.md`，
+模拟工单页见 `docs/runbooks/ticket-page.md`，
 近线质量评估见 `docs/runbooks/nearline-eval.md`，
-LLM-as-judge 见 `docs/runbooks/llm-judge.md`。
+LLM-as-judge 见 `docs/runbooks/llm-judge.md`，
+judge 校准报告见 `docs/status/judge-calibration.md`。
 
 ## 五件套可观测
 
@@ -150,6 +153,7 @@ critical / warning / info 路由到不同邮件收件人。
 - 结构化日志、Prometheus 指标、OTel 接入点
 - 12 个端到端/集成场景
 - 观测控制台 API：trace 列表/概览、流转图、Checkpoint 历史、反馈与 badcase 回流
+- 模拟工单提交页 `/tickets`：提交生成 `LOCAL-*` 工单，进入 badcase 队列
 - 审批工作台 API：审批列表/详情、任务当前状态
 - JSONL 评测金标集：槽位、差标、RAG（recall@5/MRR/引用准确率/insufficient）、
   审批/revision、prompt 版本对比、badcase 回放；阈值进 CI（`make eval`）
