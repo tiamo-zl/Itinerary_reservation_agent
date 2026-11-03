@@ -1,0 +1,8 @@
+{"id": "exp-approval-read", "action": "search_flights", "status": "EXECUTING", "expected_code": "OK"}
+{"id": "exp-approval-confirm", "action": "book_flight", "status": "EXECUTING", "policy_passed": true, "confirmed": false, "expected_code": "CONFIRMATION_REQUIRED"}
+{"id": "exp-approval-policy", "action": "book_flight", "status": "EXECUTING", "policy_passed": null, "confirmed": true, "expected_code": "POLICY_BLOCKED"}
+{"id": "exp-approval-pending", "action": "book_hotel", "status": "EXECUTING", "policy_passed": false, "requires_approval": true, "approval_status": "pending", "confirmed": true, "expected_code": "APPROVAL_REQUIRED"}
+{"id": "exp-approval-approved", "action": "book_hotel", "status": "EXECUTING", "policy_passed": false, "requires_approval": true, "approval_status": "approved", "confirmed": true, "expected_code": "OK"}
+{"id": "exp-approval-rejected", "action": "book_hotel", "status": "EXECUTING", "policy_passed": false, "requires_approval": true, "approval_status": "rejected", "confirmed": true, "expected_code": "APPROVAL_REQUIRED"}
+{"id": "exp-approval-terminal", "action": "search_flights", "status": "COMPLETED", "expected_code": "GUARD_DENIED"}
+{"id": "exp-approval-amendment", "kind": "amendment", "revision": 2, "amended_request": {"destination_city": "上海", "start_date": "2026-12-01", "end_date": "2026-12-03"}, "expected_revision": 3}

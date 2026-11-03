@@ -1,17 +1,19 @@
 # 生产化改造进度（2026-11-01）
 
 - 分支：`feat/observability-console`
-- 最新提交：模拟工单页与 judge 校准（本条提交）；上一提交：`646a9a4 docs: freeze console and record deferred work`
-- 测试：**158 passed**，覆盖率 **82.0%**
+- 最新提交：Trace 视图、离线 demo、judge 人工复核（本条提交）；上一提交：`bed4c54 feat: add simulated ticket page and judge calibration`
+- 测试：**164 passed**，覆盖率 **82.0%**
 - 评测：`make eval` 全部通过（66 条金标/回放用例）
 - 类型检查：`make typecheck` 覆盖 application/eval/knowledge/security/tools/workers/repositories
 - 默认运行模式：`MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`
 
-## 当前快照（2026-11-02）
+## 当前快照（2026-11-03）
 
 - 工作树：无未提交改动
-- 当前运行的 API/worker：`ADAPTER_MODE=http`、`AUTH_MODE=mock`
-- 运行镜像：Alpine，已包含 `/tickets` 模拟工单页；通过 Higress 验证
+- 当前运行的 API/worker：`MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`
+- 运行镜像：Alpine，已包含 `/tickets` 模拟工单页、Trace Flow、judge 复核 API
+- 离线 scripted 模型支持常见中文差旅表达（目的地/日期/预算/住宿区域），
+  不依赖模型 Key 或 Milvus 即可演示预订、审批、确认、修改、取消
 - 演示数据：
   - `p0-manual`：task `85bf6eefa5704e7b8bb886bb0ec3d17e`，trace `p0-manual-trace`，
     approval `a6dbf800114c44a7a58d374954694bcd`，状态 `WAITING_HUMAN`（已用于 worker 停机/并发 resume 混沌）
@@ -19,7 +21,7 @@
 - 观测：
   - Prometheus 8 个 target `up`（含 Alertmanager）
   - 26 条规则已加载（16 条告警 + 10 条记录规则）
-  - Grafana 已 provision `Itinerary Agent` 与三块生产看板
+  - Grafana 已 provision `Itinerary Agent`、三块生产看板与 Trace Flow
   - Tempo 主 Trace 已接入，Grafana 已加载 Tempo 数据源
   - SkyWalking Zipkin 查询 API 已启用（19412），双跑兼容
   - Horizon 原生服务目录仍为空（Zipkin 兼容数据设计如此）
@@ -30,7 +32,7 @@
 |---|---|---|
 | P0 生产基线 | ✅ 100% | PostgreSQL、worker/outbox、鉴权、API 加固、工具治理、保留清理、可观测与 CI 收尾完成 |
 | P1 韧性与深度 | ✅ 100% | 五件套、Higress、HTTP mock、评测、模型网关、知识 CLI、压测/混沌/安全已完成；前端加固按决定不做；镜像 CVE 修复归入 P2 |
-| P2 规模化运维 | 约 90% | Tempo、日志、KPI/看板、SLO、badcase、数据集、近线评估、LLM judge、镜像 CVE、告警通知、模拟工单页、judge 校准基线已完成；控制台已冻结为 demo，正式退役暂缓 |
+| P2 规模化运维 | 约 95% | Tempo、日志、KPI/看板、SLO、badcase、数据集、近线评估、LLM judge、镜像 CVE、告警通知、模拟工单页、judge 校准基线、生产 Trace 视图/Service Graph/Agent 流转图已完成；控制台已冻结为 demo，正式退役暂缓 |
 
 ## P0 明细
 
@@ -44,7 +46,7 @@
 | W5 模型网关 | ✅ 100% | fallback、结构化校验/修复、成本账本、缓存、超时；P1 已补真流式、共享熔断、prompt 注册表、任务预算 | — |
 | W6 工具治理 | ✅ 100% | 输入/输出 schema、超时、required_scopes、错误分类、工具指标、guard/审批/下单/幂等回放审计 | — |
 | W7 可观测 | ✅ 100% | OTel、JSON 日志、Prometheus 指标、Postgres trace 投影、五件套、告警规则接入共享 Prometheus | SkyWalking 原生服务目录为空，已用 Zipkin API 查询 |
-| W8 测试/CI/文档 | ✅ 100% | 158 tests、82.0% 覆盖率、PG 测试库、ruff、mypy（新模块）、GitHub Actions 实际运行通过、ADR、Runbook | — |
+| W8 测试/CI/文档 | ✅ 100% | 164 tests、82.0% 覆盖率、PG 测试库、ruff、mypy（新模块）、GitHub Actions 实际运行通过、ADR、Runbook | — |
 
 ## 本轮（P0 收尾）完成项
 
@@ -106,6 +108,13 @@
 - 正式退役（删除 `/overview`、`/trace`、`/flow` 视图）暂缓，
   退出条件见 `docs/adr/0006-quality-operations-and-console-retirement.md`。
 
+### 范围决定：工单保持模拟体验（2026-11-03）
+
+- 不接真实 Gitee/GitHub/Jira 工单系统。
+- 保留 `LocalTicketAdapter`、`/tickets` 模拟页和 `/badcases` 管理 API。
+- 模拟体验覆盖：提交、ticket_ref、SLA、triage、关闭前回归用例约束。
+- 真实工单后续只替换 `TicketPort`。
+
 ## 当前运行
 
 - Higress 网关：8081（控制台 8002）
@@ -114,7 +123,9 @@
 - 模拟工单页：http://127.0.0.1:8081/tickets
 - Tempo：3200（OTLP 14317 / 14318）
 - Kibana 结构化日志字段：`attributes.app.*`
-- Grafana 三块生产看板：Service Health / Agent Quality / Business Funnel
+- Grafana 生产看板：Service Health / Agent Quality / Business Funnel / Trace Flow
+- Grafana Trace Flow：Agent 节点流转图（Node Graph + 只读 PostgreSQL）
+- Tempo Service Graph：service graphs / span metrics 已 remote write 到 Prometheus
 - Service Health 已加入 SLO availability、1h/6h 燃烧率、审批恢复 P95
 - OTel Collector：4317 / 4318 / 8889
 - Prometheus：19090（已加载告警）
@@ -157,6 +168,11 @@
    仅绑定 `127.0.0.1:8080`。正式退役暂缓，见 ADR 0006。
 8. 安全加固未做：真实 OIDC/SSO、密钥轮换、mTLS、字段级加密、审计导出
    记录为未加固（2026-11-02 决定暂不投入）。
+9. Tempo Service Graph 依赖 CLIENT/SERVER span 配对；健康检查会产生
+   `user → mock-deps` 虚拟边，DB/Redis 边来自 database 语义。
+10. Agent 流转图来自 PostgreSQL `spans` 投影，不是 Tempo 原生
+    Service Graph；只展示实际执行顺序。
+11. SkyWalking 原生服务目录/拓扑仍为可选验证项，Tempo/Grafana 是主视图。
 
 ## 人工验收
 
@@ -185,7 +201,7 @@ cd web && npm run build
 
 - `ruff check src tests`：通过
 - `mypy`（CI 范围，含 eval/knowledge）：通过
-- `pytest`：158 passed，82.0% 覆盖率
+- `pytest`：164 passed，82.0% 覆盖率
 - `make eval`：全部 suite 通过
 - Prometheus：26 条规则已加载（16 条告警 + 10 条记录规则）
 
@@ -213,10 +229,13 @@ cd web && npm run build
 | 项目 | 状态 |
 |---|---|
 | Tempo 主 Trace 后端 | ✅ 接入；Collector 双写 Tempo + SkyWalking |
+| Trace 调用树 | ✅ Grafana Explore → Tempo；按 `span.app.trace_id` 搜索 |
+| Tempo Service Graph | ✅ metrics-generator + Prometheus remote write |
+| Agent 流转图 | ✅ Grafana Node Graph + 只读 PostgreSQL `spans` 投影 |
 | 日志结构化 | ✅ 接入；ES `attributes.app.*` 可精确查询 |
 | `X-Trace-Id` | ✅ API/SSE 返回；工单与日志可用同一连接键 |
 | 业务 KPI 导出 | ✅ 完成：任务/审批/badcase 状态、完成率、badcase 率、审批时延 |
-| Grafana 三块看板 | ✅ Service Health / Agent Quality / Business Funnel |
+| Grafana 看板 | ✅ Service Health / Agent Quality / Business Funnel / Trace Flow |
 | SLO/燃烧率告警 | ✅ 99.5% SLO、10 条记录规则、5 条 SLO 告警 |
 | 告警通知渠道 | ✅ Alertmanager + 163 邮件；critical/warning/info 分级路由，SMTP 25 + STARTTLS，投递已验证；授权码仅存共享栈 secret |
 | Badcase 自动导出 / 工单 | ✅ 工单编号/SLA、triage 字段、关闭约束、merge 导出 |
@@ -225,6 +244,9 @@ cd web && npm run build
 | 近线质量评估 | ✅ 抽样最近任务、确定性检查、quality_findings、指标/看板/API |
 | 在线 LLM-as-judge | ✅ 抽样 COMPLETED 任务、结构化评审、judge_results、指标/看板/API（live 模式启用） |
 | Judge 校准 | ✅ 24 条 seeded 数据、`make judge-calibrate`、一致率/MAE/kappa/混淆矩阵报告 |
+| Judge 人工复核 | ✅ `judge_results.review_status`、PATCH API、导出/导入 CLI；人工标签入库 |
+| OpenJudge align-human | ✅ 独立校准脚本、TPR/TNR/kappa/AC1/bias/calibration gate（需 ≥50 标签） |
+| 在线抽样管线 | ✅ 抽样 → judge → pending 复核队列 → 人工标签 → 配对文件 → align-human |
 | 镜像 CVE 修复 | ✅ Alpine 运行镜像、移除 pip 与 SQLite 死依赖；Trivy 0 HIGH/CRITICAL（修复前 43） |
 
 ## 模型网关深度（P1）
@@ -286,9 +308,12 @@ cd web && npm run build
 1. Judge seeded 基线已跑；用人工标签复核/替换 seed，再考虑 holdout 定时跑。
 2. 工单保持模拟页；需要真实工单时替换 `TicketPort`（Gitee/GitHub/Jira）。
 3. 控制台正式退役（已冻结，待产品后台/工单就绪）。
+4. SkyWalking 原生服务目录/拓扑（可选，Tempo/Grafana 已是主视图）。
 
 已决定暂缓（2026-11-02）：
 
 - 告警第二通道：继续邮件，IM/电话暂不接入。
 - CI 镜像门禁、Alpine 定期重建。
 - 安全加固：OIDC/SSO、密钥轮换、mTLS、字段级加密、审计导出；记录为未加固。
+- 发布门禁：灰度/canary/自动回滚暂不做，先记录。
+- 数据治理：PII/保留/去重/标注规范/数据集血缘/漂移监控暂不做，先记录。

@@ -31,10 +31,12 @@ docker compose --profile core --profile observability up -d
 | 系统 | 地址 | 用途 |
 |---|---|---|
 | Grafana | http://127.0.0.1:13000 | monitoring-stack，含 `Itinerary Agent` 看板 |
+| Grafana Trace Flow | http://127.0.0.1:13000/d/itinerary-trace-flow | Agent 节点流转图 |
+| Tempo | http://127.0.0.1:3200 | 主 Trace 后端；Grafana Explore 查询 |
 | Prometheus | http://127.0.0.1:19090 | 原始指标与告警规则 |
 | Alertmanager | http://127.0.0.1:19093 | 告警路由、分组、抑制 |
 | Mailpit | http://127.0.0.1:8025 | 本地测试邮件收件箱 |
-| SkyWalking UI | http://127.0.0.1:18080 | Trace 查询 |
+| SkyWalking UI | http://127.0.0.1:18080 | Trace 查询（双跑） |
 | Kibana | http://127.0.0.1:5601 | 日志检索，data stream `logs-itinerary` |
 | Langfuse | http://127.0.0.1:3030 | Agent/LLM span 分析 |
 | OTel Collector | 4317（gRPC）、4318（HTTP） | 应用 OTLP 入口 |
@@ -43,19 +45,28 @@ docker compose --profile core --profile observability up -d
 
 ```text
 API/worker --OTLP--> Collector
-  traces --> SkyWalking（全部 span）
+  traces --> Tempo（主 Trace）
+  traces --> SkyWalking（双跑兼容）
   traces --> Langfuse（仅带 task_id 的 agent span）
   logs   --> Elasticsearch（Docker json-file -> logs-itinerary data stream）
   metrics--> Prometheus exporter / 应用 /metrics 直接抓取
+
+Tempo metrics-generator
+  service graphs + span metrics --> Prometheus（remote write）
 ```
 
 - Prometheus 直接抓取 `api:8000/metrics`、`worker:8001/metrics` 和 Collector 的 `:8889`。
 - Grafana 自动加载 `Itinerary Agent` 看板。
+- Grafana Trace Flow 看板通过只读 PostgreSQL 数据源查询 `spans` 投影，
+  按应用 trace_id 展示 Agent 节点流转。
+- 业务 span 带 `app.trace_id` 属性；Grafana Tempo 可用
+  `{ span.app.trace_id = "<X-Trace-Id>" }` 搜索。
 - Langfuse 只保留带 `task_id` 的 span，避免 HTTP/DB 噪声。
 - 告警规则源文件为 `deploy/prometheus/alerts.yml`，共享 Prometheus 挂载为
   `/etc/prometheus/rules/itinerary-alerts.yml`。
 - 告警经 Alertmanager 按 severity 路由到邮件；本地由 Mailpit 捕获。
   详见 `docs/runbooks/alerting.md`。
+- Trace 查看方式详见 `docs/runbooks/trace-viewing.md`。
 
 关键指标：
 
@@ -70,6 +81,8 @@ API/worker --OTLP--> Collector
 | `itinerary_outbox_backlog` | 审批恢复积压 |
 | `itinerary_retention_deleted_rows_total` | 保留清理 |
 | `itinerary_sse_connections` | 在线 SSE 连接 |
+| `traces_service_graph_request_total` | Tempo Service Graph 服务边 |
+| `traces_spanmetrics_calls_total` | Tempo span RED 指标 |
 
 ## 故障排查
 
@@ -86,7 +99,8 @@ API/worker --OTLP--> Collector
 - 检查 `sw_zipkin_span-*` 索引是否有文档；
 - 当前 SkyWalking 11.0.0 会把 OTLP/Zipkin span 落到 `sw_zipkin_span-*`，
   但 `sw_segment-*` 为 0、`getAllServices` 为空，这是外部栈的已知限制。
-  业务 Trace 以 Postgres 投影和 Langfuse 为准；原始 span 可在 Kibana 查询：
+  业务 Trace 以 Tempo/Grafana、Postgres 投影和 Langfuse 为准；
+  原始 span 可在 Kibana 查询：
 
   ```bash
   curl 'http://127.0.0.1:9200/sw_zipkin_span-*/_search?size=1&pretty'

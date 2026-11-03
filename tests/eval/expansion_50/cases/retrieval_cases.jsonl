@@ -1,0 +1,8 @@
+{"id": "exp-retrieval-table", "category": "keyword", "query": "附表二", "dense_ids": [], "expected": ["c2"], "expected_insufficient": false}
+{"id": "exp-retrieval-semantic", "category": "semantic", "query": "员工住酒店报销上限", "dense_ids": ["c1"], "expected": ["c1", "c2", "c4"], "expected_insufficient": false}
+{"id": "exp-retrieval-exception", "category": "exception", "query": "紧急会议", "dense_ids": [], "expected": ["c4"], "expected_insufficient": false}
+{"id": "exp-retrieval-parent", "category": "parent", "query": "住宿章节", "dense_ids": ["c6"], "expected": ["c5", "c6"], "expected_insufficient": false}
+{"id": "exp-retrieval-table-filter", "category": "table", "query": "住宿标准", "dense_ids": ["c1"], "filters": {"employee_level": "L2", "city_tier": 1}, "expected": ["c1"], "expected_table_rows": [{"职级": "L2", "城市": "北京", "上限": 500}], "expected_insufficient": false}
+{"id": "exp-retrieval-missing-table", "category": "insufficient", "query": "附表九", "dense_ids": [], "expected": ["c8"], "expected_insufficient": true}
+{"id": "exp-retrieval-no-seed", "category": "insufficient", "query": "量子计算采购", "dense_ids": [], "expected": [], "expected_insufficient": true}
+{"id": "exp-retrieval-flight", "category": "reference", "query": "机票标准", "dense_ids": [], "expected": ["c3", "c7"], "expected_insufficient": false}

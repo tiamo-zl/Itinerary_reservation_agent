@@ -47,8 +47,31 @@ eval:
 eval-holdout:
 	PYTHONPATH=src uv run python -m itinerary_agent.eval.cli --split holdout
 
+eval-expansion:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.cli \
+		--cases-dir tests/eval/expansion_50/cases \
+		--thresholds tests/eval/expansion_50/thresholds.json
+
 judge-calibrate:
 	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_calibration
+
+grafana-ro:
+	./scripts/create-grafana-ro.sh
+
+judge-review-export:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_review \
+		export --out data/judge_review.jsonl --limit 100
+
+judge-review-import:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_review \
+		import --in data/judge_review.jsonl --reviewer local
+
+judge-review-pairs:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_review \
+		pairs --out data/judge_pairs.jsonl
+
+judge-align:
+	python3 scripts/openjudge_align_human.py --pairs data/judge_pairs.jsonl
 
 lint:
 	uv run ruff check src tests

@@ -86,6 +86,9 @@ class TraceRecorder:
         task_id = _current_task.get()
         if task_id:
             attributes.setdefault("task_id", task_id)
+        # 应用自己的 trace_id 与 OTel SDK 生成的 trace ID 不同；
+        # 把应用 trace_id 作为属性写入，Tempo TraceQL 才能按 X-Trace-Id 搜索。
+        attributes.setdefault("app.trace_id", trace_id)
         span_id = uuid4().hex
         parent_id = _current_span.get()
         started_at = datetime.now(UTC)

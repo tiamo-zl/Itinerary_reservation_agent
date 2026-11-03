@@ -11,9 +11,16 @@ async def test_span_is_persisted(tmp_path):
     async with recorder.span("gateway.http", layer="gateway", status_code=200):
         pass
     rows = await db.fetchall(
-        "SELECT name, layer, status FROM spans WHERE trace_id = ?", (trace_id,)
+        "SELECT name, layer, status, attributes FROM spans "
+        "WHERE trace_id = ?",
+        (trace_id,),
     )
     assert rows[0]["name"] == "gateway.http"
     assert rows[0]["layer"] == "gateway"
     assert rows[0]["status"] == "ok"
+    attrs = rows[0]["attributes"]
+    if isinstance(attrs, str):
+        import json
+        attrs = json.loads(attrs)
+    assert attrs["app.trace_id"] == trace_id
     await db.close()

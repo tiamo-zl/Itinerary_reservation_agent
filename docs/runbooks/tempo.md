@@ -84,6 +84,9 @@ Grafana：
 2. Explore → 选择 `Tempo`
 3. 按 service / trace ID / TraceQL 查询
 
+Service Graph、Grafana Node Graph Agent 流转图见
+`docs/runbooks/trace-viewing.md`。
+
 ## 保留
 
 当前配置：

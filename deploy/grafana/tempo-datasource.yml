@@ -8,3 +8,8 @@ datasources:
     uid: tempo
     isDefault: false
     editable: true
+    jsonData:
+      nodeGraph:
+        enabled: true
+      serviceMap:
+        datasourceUid: prometheus

@@ -1,0 +1,20 @@
+# 复制到共享 monitoring-stack 的 grafana/provisioning/datasources/，
+# 并把 password 换成只读角色 grafana_ro 的真实密码。
+# 可用 scripts/create-grafana-ro.sh 创建角色。
+apiVersion: 1
+
+datasources:
+  - name: Itinerary PostgreSQL
+    type: postgres
+    uid: itinerary_pg
+    access: proxy
+    url: postgres:5432
+    user: grafana_ro
+    secureJsonData:
+      password: "CHANGE_ME"
+    jsonData:
+      database: itinerary
+      sslmode: disable
+      postgresVersion: 1700
+      timescaledb: false
+    editable: false

@@ -147,7 +147,9 @@ services:
       ["uvicorn", "--app-dir", "src",
        "itinerary_agent.mock_services.deps:app",
        "--host", "0.0.0.0", "--port", "9003"]
-    environment: *app-env
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: mock-deps
     ports:
       - "127.0.0.1:9003:9003"
     healthcheck:

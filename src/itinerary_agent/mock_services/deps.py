@@ -24,6 +24,8 @@ from itinerary_agent.adapters.mock.inventory import (
 )
 from itinerary_agent.adapters.mock.users import MockUserDirectory
 from itinerary_agent.domain.models import ApprovalRef, ApprovalStatus
+from itinerary_agent.infra.config import Settings
+from itinerary_agent.observability.telemetry import setup_telemetry
 
 
 class BookingRequest(BaseModel):
@@ -112,8 +114,12 @@ class InMemoryBookings:
             return {**result, "replayed": False}
 
 
-def create_deps_app() -> FastAPI:
+def create_deps_app(*, telemetry: bool = False) -> FastAPI:
     app = FastAPI(title="Itinerary Mock Dependencies")
+    if telemetry:
+        # 作为独立服务导出 server span，Tempo Service Graph 才能配对
+        # api -> mock-deps 的 HTTPX client span。
+        setup_telemetry(Settings(), app)
     users = MockUserDirectory()
     flights = MockFlightInventory()
     hotels = MockHotelInventory()
@@ -210,4 +216,4 @@ def create_deps_app() -> FastAPI:
     return app
 
 
-app = create_deps_app()
+app = create_deps_app(telemetry=True)

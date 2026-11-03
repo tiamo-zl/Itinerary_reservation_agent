@@ -47,6 +47,12 @@ class FeedbackRequest(BaseModel):
     comment: str = ""
 
 
+class JudgeReviewRequest(BaseModel):
+    human_score: int
+    human_verdict: Literal["pass", "fail"]
+    comment: str = ""
+
+
 class BadcaseUpdate(BaseModel):
     status: Literal["open", "reproduced", "fixed", "closed"] | None = None
     root_cause: str | None = None
@@ -266,9 +272,22 @@ def build_router(container) -> APIRouter:
         )
 
     @router.get("/quality/judgements")
-    async def quality_judgements(request: Request, limit: int = 100):
+    async def quality_judgements(
+        request: Request, limit: int = 100,
+        review_status: str | None = None,
+        verdict: str | None = None,
+    ):
         return await container.quality_queries.list_judgements(
-            build_context(request), limit
+            build_context(request), limit, review_status, verdict
+        )
+
+    @router.patch("/quality/judgements/{judge_id}")
+    async def review_judgement(judge_id: str,
+                               payload: JudgeReviewRequest,
+                               request: Request):
+        return await container.quality_queries.review_judgement(
+            build_context(request), judge_id, payload.human_score,
+            payload.human_verdict, payload.comment,
         )
 
     @router.get("/badcases")

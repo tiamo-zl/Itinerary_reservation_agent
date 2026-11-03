@@ -32,18 +32,61 @@ class PostgresJudgeRepository:
             ),
         )
 
-    async def list_recent(self, limit: int = 100) -> list[dict]:
+    async def list_recent(self, limit: int = 100,
+                          review_status: str | None = None,
+                          verdict: str | None = None) -> list[dict]:
+        conditions: list[str] = []
+        params: list = []
+        if review_status:
+            conditions.append("review_status = ?")
+            params.append(review_status)
+        if verdict:
+            conditions.append("verdict = ?")
+            params.append(verdict)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = await self.db.fetchall(
             "SELECT judge_id, task_id, trace_id, tenant_id, prompt_version, "
-            "model, provider, score, verdict, reason, created_at "
-            "FROM judge_results ORDER BY created_at DESC LIMIT ?",
-            (limit,),
+            "model, provider, score, verdict, reason, created_at, "
+            "review_status, human_score, human_verdict, reviewer, "
+            "review_comment, reviewed_at "
+            f"FROM judge_results {where} "
+            "ORDER BY created_at DESC LIMIT ?",
+            (*params, limit),
         )
         return [dict(row) for row in rows]
+
+    async def get(self, judge_id: str) -> dict | None:
+        row = await self.db.fetchone(
+            "SELECT judge_id, task_id, trace_id, tenant_id, prompt_version, "
+            "model, provider, score, verdict, reason, created_at, "
+            "review_status, human_score, human_verdict, reviewer, "
+            "review_comment, reviewed_at FROM judge_results "
+            "WHERE judge_id = ?",
+            (judge_id,),
+        )
+        return dict(row) if row else None
+
+    async def review(self, judge_id: str, human_score: int,
+                     human_verdict: str, reviewer: str,
+                     comment: str = "") -> None:
+        await self.db.execute(
+            "UPDATE judge_results SET review_status = 'reviewed', "
+            "human_score = ?, human_verdict = ?, reviewer = ?, "
+            "review_comment = ?, reviewed_at = now() "
+            "WHERE judge_id = ?",
+            (human_score, human_verdict, reviewer, comment, judge_id),
+        )
 
     async def counts(self) -> list[dict]:
         rows = await self.db.fetchall(
             "SELECT verdict, COUNT(*) AS count, AVG(score) AS avg_score "
             "FROM judge_results GROUP BY verdict"
+        )
+        return [dict(row) for row in rows]
+
+    async def review_counts(self) -> list[dict]:
+        rows = await self.db.fetchall(
+            "SELECT review_status, COUNT(*) AS count "
+            "FROM judge_results GROUP BY review_status"
         )
         return [dict(row) for row in rows]

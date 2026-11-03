@@ -164,6 +164,92 @@ uv run python -m itinerary_agent.eval.judge_calibration \
 3. 达阈值后再把 judge 作为趋势信号，仍不作为 CI 硬门禁；
 4. 每次修改 judge prompt 后重新校准。
 
+## 人工复核与 OpenJudge 校准
+
+judge 结果默认进入人工复核队列（`review_status=pending`）。
+
+### 1. 导出待复核
+
+```bash
+make judge-review-export
+```
+
+生成 `data/judge_review.jsonl`，每人一行：
+
+```json
+{
+  "judge_id": "...",
+  "task_id": "...",
+  "trace_id": "...",
+  "judge_score": 2,
+  "judge_verdict": "fail",
+  "judge_reason": "...",
+  "human_score": null,
+  "human_verdict": null,
+  "comment": ""
+}
+```
+
+人工填写 `human_score`（0–5）、`human_verdict`（pass/fail）和 `comment`。
+
+### 2. 导入人工标签
+
+```bash
+make judge-review-import
+```
+
+也可以走 API：
+
+```bash
+curl -X PATCH http://127.0.0.1:8081/quality/judgements/<judge_id> \
+  -H 'Content-Type: application/json' \
+  -H 'X-Mock-User: u002' \
+  -d '{"human_score":5,"human_verdict":"pass","comment":"审核通过"}'
+```
+
+### 3. 生成配对文件并校准
+
+```bash
+make judge-review-pairs
+make judge-align
+```
+
+`judge-align` 使用 **OpenJudge align-human**（Apache-2.0）的独立脚本
+`scripts/openjudge_align_human.py`，只需要标准库：
+
+- TPR / TNR / F1，带 bootstrap 95% CI
+- Cohen's kappa
+- Gwet's AC1（处理类别不平衡）
+- directional bias
+- calibration gate
+
+门槛：
+
+```text
+>= 50 human labels
+>= 10 per class
+TPR >= 0.8
+TNR >= 0.8
+```
+
+样本不足时会返回 `insufficient_evidence`，不会假装已校准。
+
+### 与 OpenJudge 的关系
+
+- **可以直接接入**的是 `align-human` 校准脚本；它不依赖 OpenJudge 包。
+- OpenJudge 的完整 graders/GradingRunner 可以替换 judge 实现，但会引入额外框架；
+  当前项目继续使用自己的 `model_gateway` + judge prompt。
+- 人工标注 UI 仍由本项目提供（当前是 CLI/API，后续可接产品后台）。
+
+脚本来源：
+
+```text
+https://github.com/agentscope-ai/OpenJudge
+skills/eval_pipeline/03-align-human/scripts/calibration.py
+```
+
+License 文本见 `docs/third-party/OpenJudge-APACHE-2.0.txt`。
+
 ## 问题处理
 
 ### judge pass ratio 下降

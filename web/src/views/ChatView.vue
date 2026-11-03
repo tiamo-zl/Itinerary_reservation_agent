@@ -197,7 +197,10 @@ async function refreshTask(silent = false) {
   if (!taskId.value) return
   if (!silent) loadingTask.value = true
   try {
-    const state = await getJson<TaskState>(`/tasks/${taskId.value}/state`)
+    const state = await getJson<TaskState>(
+      `/tasks/${taskId.value}/state`,
+      user.value,
+    )
     const values = state.values || {}
     taskValues.value = values
     taskStatus.value = String(values.status || '')

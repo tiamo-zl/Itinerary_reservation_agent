@@ -1,0 +1,12 @@
+{
+  "version": "2026.11.03-expansion",
+  "description": "50-case expansion dataset for eval practice",
+  "default_split": {
+    "slot": "golden",
+    "policy": "golden",
+    "retrieval": "golden",
+    "approval": "golden",
+    "prompt": "golden",
+    "badcase": "regression"
+  }
+}

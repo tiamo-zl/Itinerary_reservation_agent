@@ -57,12 +57,16 @@ Web；详见 `docs/runbooks/higress.md`。
 ```bash
 make test                     # 需要 TEST_DATABASE_URL
 make eval                     # 金标集 + 阈值，失败返回非零
+make eval-expansion           # 50 条扩展评测集
+make eval-holdout             # 只跑 holdout
 make knowledge-check          # 制度条款/引用/表格一致性检查
 make lint
 make typecheck
 ```
 
 默认 `MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`，不访问真实模型或外部业务系统。
+scripted 模型会解析常见中文差旅表达（目的地/日期/预算/住宿区域），
+因此无需 Key 或 Milvus 也能演示预订、审批、确认、修改和取消。
 切换 live 模式需要配置 DeepSeek / DashScope Key，并启动本地 Milvus（`127.0.0.1:19530`）。
 生产环境禁止 mock 鉴权，必须配置 JWT 或 OIDC。
 
@@ -100,15 +104,17 @@ HTTP 模式覆盖用户、库存、审批、下单；超时/重试/trace 透传�
 压测/混沌/安全见 `docs/runbooks/load-chaos-security.md`，
 SkyWalking Zipkin 查询见 `docs/runbooks/skywalking.md`，
 Tempo 接入见 `docs/runbooks/tempo.md`，
+Trace 调用树/Service Graph/Agent 流转图见 `docs/runbooks/trace-viewing.md`，
 结构化日志与 `X-Trace-Id` 见 `docs/runbooks/logs.md`，
-业务 KPI 与三块生产看板见 `docs/runbooks/business-metrics.md`，
+业务 KPI 与生产看板见 `docs/runbooks/business-metrics.md`，
 SLO/燃烧率见 `docs/runbooks/slo.md`，
 告警通知见 `docs/runbooks/alerting.md`，
 Badcase 闭环见 `docs/runbooks/badcase-loop.md`，
 模拟工单页见 `docs/runbooks/ticket-page.md`，
 近线质量评估见 `docs/runbooks/nearline-eval.md`，
-LLM-as-judge 见 `docs/runbooks/llm-judge.md`，
-judge 校准报告见 `docs/status/judge-calibration.md`。
+LLM-as-judge、人工复核与 OpenJudge align-human 校准见
+`docs/runbooks/llm-judge.md`，
+judge seeded 校准报告见 `docs/status/judge-calibration.md`。
 
 ## 五件套可观测
 
@@ -120,6 +126,7 @@ make obs-up    # 自动读取 Langfuse key，启动 core + observability
   - `Itinerary Service Health`
   - `Itinerary Agent Quality`
   - `Itinerary Business Funnel`
+  - `Itinerary Trace Flow`（Agent 节点流转图）
 - Prometheus：http://127.0.0.1:19090（含 `itinerary-agent` 告警规则）
 - Alertmanager：http://127.0.0.1:19093（按 severity 路由邮件，当前接 163 SMTP）
 - Mailpit：http://127.0.0.1:8025（本地 SMTP 回退收件箱）
@@ -130,12 +137,17 @@ make obs-up    # 自动读取 Langfuse key，启动 core + observability
 - Langfuse：http://127.0.0.1:3030
 
 数据流：应用 OTLP → Collector → Tempo（主）/ SkyWalking（双跑）/ Langfuse；
-Docker 日志 → Elasticsearch；Prometheus 抓取 API/worker/Collector 指标；
+Tempo metrics-generator 生成 Service Graph / span metrics 并 remote write 到
+Prometheus；Docker 日志 → Elasticsearch；Prometheus 抓取 API/worker/Collector 指标；
 Grafana 自动加载看板与 Tempo 数据源。
+Trace 调用树：Grafana Explore → Tempo，TraceQL 可用
+`{ span.app.trace_id = "<X-Trace-Id>" }`。
+Agent 流转图：`/d/itinerary-trace-flow`，输入应用 trace_id。
 告警规则在 `deploy/prometheus/alerts.yml`，共享 Prometheus 通过
 `/etc/prometheus/rules/itinerary-alerts.yml` 加载；Alertmanager 按
 critical / warning / info 路由到不同邮件收件人。
-详见 `docs/runbooks/observability.md` 和 `docs/runbooks/alerting.md`。
+详见 `docs/runbooks/observability.md`、`docs/runbooks/trace-viewing.md`
+和 `docs/runbooks/alerting.md`。
 
 ## 已实现
 
@@ -151,6 +163,7 @@ critical / warning / info 路由到不同邮件收件人。
 - 模型主备切换、Redis 共享熔断、真流式、prompt 版本注册表、任务预算、结构化输出校验/修复、成本账本
 - JWT/OIDC 鉴权、Redis 限流与缓存
 - 结构化日志、Prometheus 指标、OTel 接入点
+- 生产 Trace 视图：Grafana Explore → Tempo、Tempo Service Graph、Agent Trace Flow Node Graph
 - 12 个端到端/集成场景
 - 观测控制台 API：trace 列表/概览、流转图、Checkpoint 历史、反馈与 badcase 回流
 - 模拟工单提交页 `/tickets`：提交生成 `LOCAL-*` 工单，进入 badcase 队列

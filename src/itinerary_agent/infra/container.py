@@ -562,7 +562,7 @@ class Container:
             )
             self.judge_repo = self.judge_repo or PostgresJudgeRepository(self.db)
             self.quality_queries = QualityQueryService(
-                self.quality_finding_repo, self.judge_repo
+                self.quality_finding_repo, self.judge_repo, self.audit
             )
         from itinerary_agent.infra.rate_limit import RateLimiter
 
@@ -575,9 +575,11 @@ class Container:
 
     def _default_model(self):
         # 无 API Key 时的离线默认实现；真实模型在 M3 接入。
-        from itinerary_agent.adapters.scripted_model import ScriptedModelGateway
+        from itinerary_agent.adapters.scripted_model import (
+            DemoScriptedModelGateway,
+        )
 
-        return ScriptedModelGateway([])
+        return DemoScriptedModelGateway([])
 
 
 def build_container(settings: Settings | None = None) -> Container:

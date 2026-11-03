@@ -1,0 +1,26 @@
+{
+  "slot": {
+    "exact_match_rate": 0.85,
+    "field_accuracy": 0.95
+  },
+  "policy": {
+    "decision_accuracy": 0.95
+  },
+  "retrieval": {
+    "recall_at_5": 0.95,
+    "mrr": 0.85,
+    "citation_precision": 0.7,
+    "insufficient_accuracy": 0.95
+  },
+  "approval": {
+    "scenario_pass_rate": 1.0
+  },
+  "prompt": {
+    "v1_exact_match_rate": 0.8,
+    "v2_exact_match_rate": 0.8,
+    "overall_exact_match_rate": 0.8
+  },
+  "badcase": {
+    "replay_pass_rate": 1.0
+  }
+}

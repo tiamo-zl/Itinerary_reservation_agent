@@ -1,0 +1,90 @@
+{
+  "uid": "itinerary-trace-flow",
+  "title": "Itinerary Trace Flow",
+  "tags": [
+    "itinerary",
+    "trace",
+    "flow"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "trace_id",
+        "label": "Trace ID",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "nodeGraph",
+      "title": "Agent Flow",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "itinerary_pg"
+      },
+      "gridPos": {
+        "h": 15,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "nodes",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH graph(node, label) AS (\n  VALUES\n    ('understand','理解需求'), ('plan','规划'), ('search','查询'),\n    ('policy','差标'), ('approval','审批'), ('confirm','确认'),\n    ('book','下单'), ('respond','回复')\n), ordered AS (\n  SELECT replace(name, 'orchestration.node.', '') AS node,\n         status, duration_ms, start_time,\n         lag(replace(name, 'orchestration.node.', ''))\n           OVER (ORDER BY start_time) AS prev\n  FROM spans\n  WHERE trace_id = '$trace_id'\n    AND name LIKE 'orchestration.node.%'\n), marked AS (\n  SELECT *,\n         sum(CASE WHEN node IS DISTINCT FROM prev THEN 1 ELSE 0 END)\n           OVER (ORDER BY start_time) AS grp\n  FROM ordered\n), dedup AS (\n  SELECT grp,\n         (array_agg(node ORDER BY start_time))[1] AS node,\n         (array_agg(status ORDER BY start_time))[1] AS status,\n         (array_agg(duration_ms ORDER BY start_time))[1] AS duration_ms,\n         min(start_time) AS start_time\n  FROM marked\n  GROUP BY grp\n)\nSELECT d.node AS id,\n       g.label AS title,\n       d.status AS subtitle,\n       d.duration_ms AS mainstat,\n       CASE WHEN d.status = 'error' THEN 'red' ELSE 'green' END AS color,\n       d.start_time AS detail__start_time\nFROM dedup d JOIN graph g ON g.node = d.node\nORDER BY d.start_time;"
+        },
+        {
+          "refId": "edges",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH ordered AS (\n  SELECT replace(name, 'orchestration.node.', '') AS node,\n         start_time,\n         lag(replace(name, 'orchestration.node.', ''))\n           OVER (ORDER BY start_time) AS prev\n  FROM spans\n  WHERE trace_id = '$trace_id'\n    AND name LIKE 'orchestration.node.%'\n), marked AS (\n  SELECT *,\n         sum(CASE WHEN node IS DISTINCT FROM prev THEN 1 ELSE 0 END)\n           OVER (ORDER BY start_time) AS grp\n  FROM ordered\n), dedup AS (\n  SELECT grp,\n         (array_agg(node ORDER BY start_time))[1] AS node,\n         min(start_time) AS start_time\n  FROM marked\n  GROUP BY grp\n), seq AS (\n  SELECT node, lag(node) OVER (ORDER BY start_time) AS prev\n  FROM dedup\n)\nSELECT prev || ' -> ' || node AS id,\n       prev AS source,\n       node AS target,\n       1 AS mainstat\nFROM seq\nWHERE prev IS NOT NULL;"
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Trace Summary",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "itinerary_pg"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
+      "targets": [
+        {
+          "refId": "summary",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT task_id, status,\n       min(start_time) AS started_at,\n       max(start_time) AS last_span,\n       count(*) AS node_spans\nFROM spans\nWHERE trace_id = '$trace_id'\n  AND name LIKE 'orchestration.node.%'\nGROUP BY task_id, status\nORDER BY started_at;"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    }
+  ]
+}

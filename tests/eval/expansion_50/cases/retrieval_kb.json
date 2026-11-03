@@ -1,0 +1,119 @@
+{
+  "clauses": [
+    {
+      "clause_id": "c5",
+      "parent_id": null,
+      "path": "travel/00",
+      "title": "住宿章节",
+      "text": "本章规定员工出差住宿标准。",
+      "clause_type": "chapter",
+      "policy_version": "2026.1",
+      "table_id": null
+    },
+    {
+      "clause_id": "c6",
+      "parent_id": "c5",
+      "path": "travel/00/01",
+      "title": "住宿标准细则",
+      "text": "一线城市住宿上限 500 元。",
+      "clause_type": "clause",
+      "policy_version": "2026.1",
+      "table_id": null
+    },
+    {
+      "clause_id": "c1",
+      "parent_id": null,
+      "path": "travel/01",
+      "title": "住宿标准",
+      "text": "一线城市住宿上限 500 元，具体见附表二。",
+      "clause_type": "clause",
+      "policy_version": "2026.1",
+      "table_id": "t1"
+    },
+    {
+      "clause_id": "c2",
+      "parent_id": null,
+      "path": "travel/02",
+      "title": "附表二",
+      "text": "各职级住宿标准表。",
+      "clause_type": "table",
+      "policy_version": "2026.1",
+      "table_id": "t2"
+    },
+    {
+      "clause_id": "c3",
+      "parent_id": null,
+      "path": "travel/03",
+      "title": "机票标准",
+      "text": "经济舱票价上限 2000 元，职级说明见附录。",
+      "clause_type": "clause",
+      "policy_version": "2026.1",
+      "table_id": null
+    },
+    {
+      "clause_id": "c4",
+      "parent_id": null,
+      "path": "travel/04",
+      "title": "例外条款",
+      "text": "紧急会议可特批。",
+      "clause_type": "exception",
+      "policy_version": "2026.1",
+      "table_id": null
+    },
+    {
+      "clause_id": "c7",
+      "parent_id": null,
+      "path": "travel/05",
+      "title": "职级说明",
+      "text": "L2 为中级员工。",
+      "clause_type": "clause",
+      "policy_version": "2026.1",
+      "table_id": null
+    },
+    {
+      "clause_id": "c8",
+      "parent_id": null,
+      "path": "travel/06",
+      "title": "缺失表格",
+      "text": "具体见附表九。",
+      "clause_type": "clause",
+      "policy_version": "2026.1",
+      "table_id": "missing"
+    },
+    {
+      "clause_id": "c9",
+      "parent_id": null,
+      "path": "travel/07",
+      "title": "城市等级",
+      "text": "杭州为二线城市。",
+      "clause_type": "clause",
+      "policy_version": "2026.1",
+      "table_id": null
+    }
+  ],
+  "edges": [
+    {"source_id": "c1", "relation": "references", "target_id": "c2"},
+    {"source_id": "c1", "relation": "exception_to", "target_id": "c4"},
+    {"source_id": "c3", "relation": "references", "target_id": "c7"}
+  ],
+  "tables": [
+    {
+      "table_id": "t1",
+      "source_clause_id": "c1",
+      "columns": ["职级", "城市", "上限"],
+      "rows": [
+        {"职级": "L2", "城市": "北京", "上限": 500},
+        {"职级": "L3", "城市": "北京", "上限": 700}
+      ]
+    },
+    {
+      "table_id": "t2",
+      "source_clause_id": "c2",
+      "columns": ["职级", "上限"],
+      "rows": [
+        {"职级": "L2", "上限": 500},
+        {"职级": "L3", "上限": 700}
+      ]
+    }
+  ]
+}
