@@ -12,6 +12,8 @@ from tests.db_utils import TEST_DATABASE_URL
 
 # 只清理业务表；LangGraph checkpoint 表由库自己管理，按 thread_id 隔离。
 APP_TABLES = (
+    "eval_case_results",
+    "eval_runs",
     "tasks",
     "messages",
     "user_memories",

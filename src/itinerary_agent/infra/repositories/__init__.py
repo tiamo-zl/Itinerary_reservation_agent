@@ -16,6 +16,9 @@ from itinerary_agent.infra.repositories.checkpoint_repository import (
 from itinerary_agent.infra.repositories.conversation_repository import (
     PostgresConversationRepository,
 )
+from itinerary_agent.infra.repositories.eval_run_repository import (
+    PostgresEvalRunRepository,
+)
 from itinerary_agent.infra.repositories.feedback_repository import (
     PostgresFeedbackRepository,
 )
@@ -54,6 +57,7 @@ __all__ = [
     "PostgresAuditLog",
     "PostgresCheckpointRepository",
     "PostgresConversationRepository",
+    "PostgresEvalRunRepository",
     "PostgresFeedbackRepository",
     "PostgresIdempotencyRepository",
     "PostgresJudgeRepository",

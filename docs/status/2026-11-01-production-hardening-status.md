@@ -1,15 +1,15 @@
 # 生产化改造进度（2026-11-01）
 
 - 分支：`feat/observability-console`
-- 最新提交：Trace 视图、离线 demo、judge 人工复核（本条提交）；上一提交：`bed4c54 feat: add simulated ticket page and judge calibration`
-- 测试：**172 passed**，覆盖率 **76.8%**
+- 最新提交：`0f97e9a feat: add judge calibration labeling and quality reports`（eval_runs 变更待提交）
+- 测试：**175 passed**，覆盖率 **77.4%**
 - 评测：`make eval` 全部通过（66 条金标/回放用例）
 - 类型检查：`make typecheck` 覆盖 application/eval/knowledge/security/tools/workers/repositories
 - 默认运行模式：`MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`
 
-## 当前快照（2026-11-03）
+## 当前快照（2026-11-04）
 
-- 工作树：judge 一次性采样、50 条离线校准集与人工标注工具（待提交）
+- 工作树：eval_runs 实验记录与基线对比（待提交）
 - 当前运行的 API/worker：`MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`
 - 运行镜像：Alpine，已包含 `/tickets` 模拟工单页、Trace Flow、judge 复核 API
 - 离线 scripted 模型支持常见中文差旅表达（目的地/日期/预算/住宿区域），
@@ -46,7 +46,7 @@
 | W5 模型网关 | ✅ 100% | fallback、结构化校验/修复、成本账本、缓存、超时；P1 已补真流式、共享熔断、prompt 注册表、任务预算 | — |
 | W6 工具治理 | ✅ 100% | 输入/输出 schema、超时、required_scopes、错误分类、工具指标、guard/审批/下单/幂等回放审计 | — |
 | W7 可观测 | ✅ 100% | OTel、JSON 日志、Prometheus 指标、Postgres trace 投影、五件套、告警规则接入共享 Prometheus | SkyWalking 原生服务目录为空，已用 Zipkin API 查询 |
-| W8 测试/CI/文档 | ✅ 100% | 172 tests、76.8% 覆盖率、PG 测试库、ruff、mypy（新模块）、GitHub Actions 实际运行通过、ADR、Runbook | — |
+| W8 测试/CI/文档 | ✅ 100% | 175 tests、77.4% 覆盖率、PG 测试库、ruff、mypy（新模块）、GitHub Actions 实际运行通过、ADR、Runbook | — |
 
 ## 本轮（P0 收尾）完成项
 
@@ -207,7 +207,7 @@ cd web && npm run build
 
 - `ruff check src tests`：通过
 - `mypy`（CI 范围，含 eval/knowledge）：通过
-- `pytest`：172 passed，76.8% 覆盖率
+- `pytest`：175 passed，77.4% 覆盖率
 - `make eval`：全部 suite 通过
 - Prometheus：26 条规则已加载（16 条告警 + 10 条记录规则）
 
@@ -247,6 +247,7 @@ cd web && npm run build
 | Badcase 自动导出 / 工单 | ✅ 工单编号/SLA、triage 字段、关闭约束、merge 导出 |
 | 模拟工单提交页 | ✅ `/tickets`：提交生成 `LOCAL-*` 工单，进入 badcase 队列；后续可替换真实 TicketPort |
 | 数据集版本化/拆分 | ✅ dataset_version、golden/regression/holdout、holdout 独立运行 |
+| 评测实验记录 | ✅ `eval_runs` / `eval_case_results`；`make eval-record`、`eval-compare`、`eval-runs`；指标与用例级基线对比、回归门禁 |
 | 近线质量评估 | ✅ 抽样最近任务、确定性检查、quality_findings、指标/看板/API |
 | 在线 LLM-as-judge | ✅ 抽样 COMPLETED 任务、结构化评审、judge_results、指标/看板/API（live 模式启用） |
 | Judge 校准 | ✅ 24 条 seeded 基线 + 50 条人工校准集；`make judge-calibrate` 输出一致率/MAE/kappa/混淆矩阵 |

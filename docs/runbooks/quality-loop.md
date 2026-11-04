@@ -310,7 +310,40 @@ JSONL 加载会跳过空行和以 `#` 开头的注释行。新增 retrieval 用�
 - `scenario_cases.jsonl` 不是执行测试，而是**清单校验**：`test_scenario_manifest` 断言 `tests/test_scenarios.py` 中存在同名测试函数，防止评测集与 e2e 测试脱节。
 - CI（`.github/workflows/ci.yml`）在 `pytest`（覆盖率门槛 70%）之后执行 `python -m itinerary_agent.eval.cli`，与本地 `make eval` 使用同一套 runner 和阈值。
 
-### 2.8 已知边界
+### 2.8 实验记录与基线对比
+
+每次评测都可以落库，形成可追溯的实验记录：
+
+```bash
+make eval-record           # 记录本次运行
+make eval-compare          # 记录并与最近一次同 dataset/split/suite 的运行对比
+make eval-runs             # 列出最近运行
+```
+
+落库内容：
+
+```text
+eval_runs
+  run_id / started_at / finished_at / status
+  dataset_version / splits / suites / prompt_version / git_sha
+  total_cases / passed_cases / failed_cases
+  suite_metrics / threshold_failures / config
+eval_case_results
+  run_id / suite / case_id / passed / detail
+```
+
+基线选择规则：
+
+- `--baseline latest`：同一 `dataset_version`、`splits`、`suites` 的
+  最近一次 completed run；
+- `--baseline <run_id>`：显式指定基线；
+- 对比输出包括 metric delta、case 级 `regression/fix/added/removed`、阈值失败变化；
+- `eval-compare` 带 `--fail-on-regression`，指标下降或用例由过变不过时返回非零。
+
+`make eval` 仍然不依赖数据库，适合 CI；需要实验记录时用
+`make eval-record` / `make eval-compare`。
+
+### 2.9 已知边界
 
 - 全离线：不调用真实模型、不连 Milvus，适合 CI 稳定运行；**live 质量必须靠 `prompt` suite 录制真实输出来覆盖**。
 - slot/policy 测的是规则与确定性控制，不覆盖模型理解错误；这类问题应先归类到 `prompt` 或端到端场景。

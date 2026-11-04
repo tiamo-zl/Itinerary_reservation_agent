@@ -5,7 +5,7 @@ DURATION ?= 30s
 RAMP ?= 20s
 HOLD ?= 60s
 
-.PHONY: db-up db-down db-logs migrate revision api worker idp obs-up obs-down higress-up higress-down demo-seed knowledge-ingest knowledge-reindex knowledge-check badcase-export chaos-up chaos-down load-smoke load-chat load-read load audit ci test eval eval-holdout judge-sample judge-review-label judge-label-prepare judge-label judge-label-finalize judge-calibrate-human judge-report lint typecheck web-build smoke
+.PHONY: db-up db-down db-logs migrate revision api worker idp obs-up obs-down higress-up higress-down demo-seed knowledge-ingest knowledge-reindex knowledge-check badcase-export chaos-up chaos-down load-smoke load-chat load-read load audit ci test eval eval-holdout eval-record eval-compare eval-runs judge-sample judge-review-label judge-label-prepare judge-label judge-label-finalize judge-calibrate-human judge-report lint typecheck web-build smoke
 
 # 只启动 P0 需要的基础设施，不构建应用镜像。
 db-up:
@@ -51,6 +51,16 @@ eval-expansion:
 	PYTHONPATH=src uv run python -m itinerary_agent.eval.cli \
 		--cases-dir tests/eval/expansion_50/cases \
 		--thresholds tests/eval/expansion_50/thresholds.json
+
+eval-record:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.cli --record $(ARGS)
+
+eval-compare:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.cli \
+		--record --baseline latest --fail-on-regression $(ARGS)
+
+eval-runs:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.cli --list-runs
 
 judge-calibrate:
 	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_calibration \

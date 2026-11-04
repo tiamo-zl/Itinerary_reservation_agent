@@ -57,6 +57,9 @@ Web；详见 `docs/runbooks/higress.md`。
 ```bash
 make test                     # 需要 TEST_DATABASE_URL
 make eval                     # 金标集 + 阈值，失败返回非零
+make eval-record              # 记录本次运行到 eval_runs
+make eval-compare             # 记录并与上一轮基线对比
+make eval-runs                # 列出最近评测运行
 make eval-expansion           # 50 条扩展评测集
 make eval-holdout             # 只跑 holdout
 make knowledge-check          # 制度条款/引用/表格一致性检查
