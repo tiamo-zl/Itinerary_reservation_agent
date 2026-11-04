@@ -129,6 +129,13 @@ make judge-calibrate-human
 make judge-report          # 工具 + 数据集 + 校准报告
 ```
 
+无人工标签时可先用 silver labels 跑通链路（不能替代人工校准）：
+
+```bash
+make judge-label-auto
+make judge-calibrate-auto
+```
+
 ## 五件套可观测
 
 ```bash

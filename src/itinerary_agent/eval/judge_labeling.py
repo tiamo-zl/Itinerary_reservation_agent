@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from itinerary_agent.domain.models import CallContext, ModelTier
+from itinerary_agent.eval.auto_label import auto_label
 from itinerary_agent.eval.judge_calibration import _parse_judge_json
 from itinerary_agent.eval.judge_format import format_context
 from itinerary_agent.infra.config import Settings
@@ -201,6 +202,46 @@ async def _label(args) -> int:
     return 0
 
 
+def _auto(args) -> int:
+    rows = _read_rows(args.infile)
+    dataset = []
+    judge_agree = 0
+    judged = 0
+    for row in rows:
+        label = auto_label(row["values"])
+        dataset.append({
+            "id": row["id"],
+            "human_score": label["score"],
+            "human_verdict": label["verdict"],
+            "label_source": "auto-rule",
+            "reviewer": "auto-rule",
+            "auto_reason": "; ".join(label["reasons"]),
+            "task": row["task"],
+            "values": row["values"],
+            "judge_score": row.get("judge_score"),
+            "judge_verdict": row.get("judge_verdict"),
+            "judge_reason": row.get("judge_reason", ""),
+        })
+        if row.get("judge_verdict"):
+            judged += 1
+            judge_agree += int(row["judge_verdict"] == label["verdict"])
+    _write_rows(args.out, dataset)
+
+    seed_labels = {}
+    if args.labels_from.exists():
+        seed_labels = {row["id"]: row for row in _read_rows(args.labels_from)}
+    seed_agree = sum(
+        int(seed_labels[row["id"]]["human_verdict"] == row["human_verdict"])
+        for row in dataset if row["id"] in seed_labels
+    )
+    print(
+        f"wrote {len(dataset)} auto labels to {args.out}; "
+        f"judge agreement={judge_agree}/{judged}; "
+        f"seed agreement={seed_agree}/{len(seed_labels)}"
+    )
+    return 0
+
+
 def _finalize(args) -> int:
     rows = _read_rows(args.infile)
     dataset = []
@@ -240,6 +281,21 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--prompt-version", default="v1")
     prepare.add_argument("--force", action="store_true")
 
+    auto = sub.add_parser(
+        "auto", help="generate deterministic silver labels"
+    )
+    auto.add_argument("--in", dest="infile", type=Path,
+                      default=DEFAULT_LABELING)
+    auto.add_argument(
+        "--out", type=Path,
+        default=Path("tests/eval/judge_calibration_auto.jsonl"),
+    )
+    auto.add_argument(
+        "--labels-from", type=Path,
+        default=Path("tests/eval/judge_calibration_50.jsonl"),
+        help="optional seed labels for agreement reporting",
+    )
+
     label = sub.add_parser("label", help="label rows interactively")
     label.add_argument("--in", dest="infile", type=Path,
                        default=DEFAULT_LABELING)
@@ -256,6 +312,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "prepare":
         return asyncio.run(_prepare(args))
+    if args.command == "auto":
+        return _auto(args)
     if args.command == "label":
         return asyncio.run(_label(args))
     if args.command == "finalize":

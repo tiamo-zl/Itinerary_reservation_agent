@@ -265,16 +265,17 @@ def render_markdown(cases: list[dict], results: list[dict],
             f"| {row['id']} | {human} | {judge} | {same} | "
             f"{detail.replace('|', '/')} |"
         )
-    human_only = set(labels) == {"human"}
-    lines.extend([
-        "",
-        (
-            "> 当前标签为人工标注。"
-            if human_only
-            else "> 当前标签为 seeded 基线；正式校准前应替换为人工标注。"
-        ),
-        "",
-    ])
+    label_set = set(labels)
+    if label_set == {"human"}:
+        note = "> 当前标签为人工标注。"
+    elif label_set == {"auto-rule"}:
+        note = (
+            "> 当前标签由确定性规则生成（silver labels），"
+            "不能替代人工校准。"
+        )
+    else:
+        note = "> 当前标签为 seeded 基线；正式校准前应替换为人工标注。"
+    lines.extend(["", note, ""])
     return "\n".join(lines)
 
 

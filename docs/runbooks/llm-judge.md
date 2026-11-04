@@ -220,6 +220,22 @@ make judge-calibrate-human
 `prepare` 不读取数据集里的 seed 标签，避免人工标注被预置答案影响。
 至少需要 50 条且每类 ≥10 条，`judge-align` 才会给出 calibration gate。
 
+### 自动 silver 标签（只用于冒烟）
+
+没有人工标签时，可以用确定性规则生成 silver labels：
+
+```bash
+make judge-label-auto
+make judge-calibrate-auto
+```
+
+- 输出：`tests/eval/judge_calibration_auto.jsonl`
+- 报告：`docs/status/judge-calibration-auto.md` / `.json`
+- 标签来源固定为 `auto-rule`，报告会明确标注“不能替代人工校准”
+
+它用于验证“数据集 → judge → 指标 → 报告”链路，不用作发布门禁，
+也不写入 `judge_calibration_human.jsonl`。
+
 ## 三类报告
 
 | 报告 | 命令 | 输出 | 回答什么 |

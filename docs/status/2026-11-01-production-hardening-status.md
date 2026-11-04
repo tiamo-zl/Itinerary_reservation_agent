@@ -1,15 +1,15 @@
 # 生产化改造进度（2026-11-01）
 
 - 分支：`feat/observability-console`
-- 最新提交：`0f97e9a feat: add judge calibration labeling and quality reports`（eval_runs 变更待提交）
-- 测试：**175 passed**，覆盖率 **77.4%**
+- 最新提交：`7cdc10f feat: record eval runs and compare baselines`（judge auto labels 待提交）
+- 测试：**179 passed**，覆盖率 **77.4%**
 - 评测：`make eval` 全部通过（66 条金标/回放用例）
 - 类型检查：`make typecheck` 覆盖 application/eval/knowledge/security/tools/workers/repositories
 - 默认运行模式：`MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`
 
 ## 当前快照（2026-11-04）
 
-- 工作树：eval_runs 实验记录与基线对比（待提交）
+- 工作树：judge 自动 silver 标签与校准报告（待提交）
 - 当前运行的 API/worker：`MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`
 - 运行镜像：Alpine，已包含 `/tickets` 模拟工单页、Trace Flow、judge 复核 API
 - 离线 scripted 模型支持常见中文差旅表达（目的地/日期/预算/住宿区域），
@@ -46,7 +46,7 @@
 | W5 模型网关 | ✅ 100% | fallback、结构化校验/修复、成本账本、缓存、超时；P1 已补真流式、共享熔断、prompt 注册表、任务预算 | — |
 | W6 工具治理 | ✅ 100% | 输入/输出 schema、超时、required_scopes、错误分类、工具指标、guard/审批/下单/幂等回放审计 | — |
 | W7 可观测 | ✅ 100% | OTel、JSON 日志、Prometheus 指标、Postgres trace 投影、五件套、告警规则接入共享 Prometheus | SkyWalking 原生服务目录为空，已用 Zipkin API 查询 |
-| W8 测试/CI/文档 | ✅ 100% | 175 tests、77.4% 覆盖率、PG 测试库、ruff、mypy（新模块）、GitHub Actions 实际运行通过、ADR、Runbook | — |
+| W8 测试/CI/文档 | ✅ 100% | 179 tests、77.4% 覆盖率、PG 测试库、ruff、mypy（新模块）、GitHub Actions 实际运行通过、ADR、Runbook | — |
 
 ## 本轮（P0 收尾）完成项
 
@@ -207,7 +207,7 @@ cd web && npm run build
 
 - `ruff check src tests`：通过
 - `mypy`（CI 范围，含 eval/knowledge）：通过
-- `pytest`：175 passed，77.4% 覆盖率
+- `pytest`：179 passed，77.4% 覆盖率
 - `make eval`：全部 suite 通过
 - Prometheus：26 条规则已加载（16 条告警 + 10 条记录规则）
 
@@ -254,6 +254,7 @@ cd web && npm run build
 | Judge 人工复核 | ✅ `judge_results.review_status`、PATCH API、导出/导入 CLI、交互式 `judge-review-label`；导出带评审上下文 |
 | Judge 一次性采样 | ✅ `make judge-sample`：对最近 COMPLETED 任务一次性 live judge，不启动 worker、不依赖 Milvus |
 | Judge 50 条离线校准集 | ✅ `tests/eval/judge_calibration_50.jsonl`（pass/fail 各 25）；`judge-label-*` 三步人工标注流程 |
+| Judge 自动 silver 标签 | ✅ 确定性规则 `auto-rule`；`judge-label-auto` / `judge-calibrate-auto`，仅用于链路冒烟，不作门禁 |
 | Judge 质量报告 | ✅ `make judge-report`：工具报告 + 数据集报告 + 校准 JSON 汇总；校准输出 md/json |
 | OpenJudge align-human | ✅ 独立校准脚本、TPR/TNR/kappa/AC1/bias/calibration gate（需 ≥50 标签） |
 | 在线抽样管线 | ✅ 抽样 → judge → pending 复核队列 → 人工标签 → 配对文件 → align-human |
