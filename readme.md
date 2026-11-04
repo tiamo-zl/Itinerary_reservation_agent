@@ -116,6 +116,16 @@ LLM-as-judge、人工复核与 OpenJudge align-human 校准见
 `docs/runbooks/llm-judge.md`，
 judge seeded 校准报告见 `docs/status/judge-calibration.md`。
 
+50 条人工校准流程：
+
+```bash
+make judge-label-prepare   # 跑 judge，生成 data/judge_labeling.jsonl
+make judge-label           # 逐条人工标注
+make judge-label-finalize
+make judge-calibrate-human
+make judge-report          # 工具 + 数据集 + 校准报告
+```
+
 ## 五件套可观测
 
 ```bash

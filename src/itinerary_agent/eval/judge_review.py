@@ -9,6 +9,9 @@
     python -m itinerary_agent.eval.judge_review import \
         --in /tmp/judge_review.jsonl --reviewer alice
 
+    # 逐条人工标注（终端交互，带评审上下文）：
+    python -m itinerary_agent.eval.judge_review label --limit 50
+
     # 生成 OpenJudge align-human 需要的配对文件：
     python -m itinerary_agent.eval.judge_review pairs \
         --out /tmp/judge_pairs.jsonl
@@ -20,6 +23,11 @@ import json
 import sys
 from pathlib import Path
 
+from itinerary_agent.eval.judge_context import (
+    CheckpointSnapshotReader,
+    load_judge_context,
+)
+from itinerary_agent.eval.judge_format import format_context
 from itinerary_agent.infra.config import Settings
 from itinerary_agent.infra.database import Database
 from itinerary_agent.infra.repositories.judge_repository import (
@@ -46,6 +54,15 @@ def _parser() -> argparse.ArgumentParser:
     export.add_argument("--limit", type=int, default=100)
     export.add_argument("--verdict", choices=["pass", "fail"], default=None)
     export.add_argument("--status", default="pending")
+    export.add_argument(
+        "--no-context", action="store_true",
+        help="do not include the judge input snapshot",
+    )
+
+    label = sub.add_parser("label", help="label pending results interactively")
+    label.add_argument("--limit", type=int, default=50)
+    label.add_argument("--verdict", choices=["pass", "fail"], default=None)
+    label.add_argument("--reviewer", default="local")
 
     imp = sub.add_parser("import", help="import human labels")
     imp.add_argument("--in", dest="infile", type=Path, required=True)
@@ -62,8 +79,9 @@ def _parser() -> argparse.ArgumentParser:
 
 
 async def _export(repo, out: Path, limit: int, status: str,
-                  verdict: str | None) -> int:
+                  verdict: str | None, with_context: bool = True) -> int:
     rows = await repo.list_recent(limit, status, verdict)
+    reader = CheckpointSnapshotReader(repo.db) if with_context else None
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="utf-8") as handle:
         for row in rows:
@@ -80,6 +98,10 @@ async def _export(repo, out: Path, limit: int, status: str,
                 "human_verdict": None,
                 "comment": "",
             }
+            if reader is not None:
+                context = await load_judge_context(reader, row)
+                if context is not None:
+                    payload["judge_input"] = context
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
     print(f"exported {len(rows)} rows to {out}")
     return 0
@@ -131,6 +153,73 @@ async def _import(repo, infile: Path, reviewer: str, dry_run: bool) -> int:
     return 0
 
 
+def _ask(prompt: str, allowed: set[str]) -> str:
+    while True:
+        answer = input(prompt).strip().lower()
+        if answer in allowed:
+            return answer
+        print(f"  invalid choice: {answer or '<empty>'}")
+
+
+def _ask_score() -> tuple[int | None, str]:
+    while True:
+        answer = input("human score 0-5 [s=skip/q=quit]: ").strip().lower()
+        if answer == "s":
+            return None, "skip"
+        if answer == "q":
+            return None, "quit"
+        try:
+            score = int(answer)
+        except ValueError:
+            print("  enter an integer 0-5")
+            continue
+        if 0 <= score <= 5:
+            return score, "ok"
+        print("  score must be between 0 and 5")
+
+
+async def _label(repo, limit: int, verdict: str | None,
+                 reviewer: str) -> int:
+    rows = await repo.list_recent(limit, "pending", verdict)
+    reader = CheckpointSnapshotReader(repo.db)
+    labeled = skipped = 0
+    for index, row in enumerate(rows, 1):
+        context = await load_judge_context(reader, row)
+        print("\n" + "=" * 70)
+        print(
+            f"[{index}/{len(rows)}] task={row['task_id']} "
+            f"judge={row['verdict']}/{row['score']} "
+            f"prompt={row['prompt_version']}"
+        )
+        print("judge reason:", row["reason"])
+        print(format_context(context) if context else "<no checkpoint context>")
+        choice = _ask(
+            "human verdict [p=pass/f=fail/s=skip/q=quit]: ",
+            {"p", "f", "s", "q"},
+        )
+        if choice == "q":
+            break
+        if choice == "s":
+            skipped += 1
+            continue
+        score, action = _ask_score()
+        if action == "quit":
+            break
+        if action == "skip":
+            skipped += 1
+            continue
+        assert score is not None
+        comment = input("comment (optional): ").strip()
+        await repo.review(
+            row["judge_id"], score,
+            "pass" if choice == "p" else "fail", reviewer, comment,
+        )
+        labeled += 1
+        print("  saved")
+    print(f"\nlabeled {labeled}, skipped {skipped}")
+    return 0
+
+
 async def _pairs(repo, out: Path, limit: int, verdict: str | None) -> int:
     rows = await repo.list_recent(limit, "reviewed", verdict)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -162,8 +251,16 @@ async def _run(args) -> int:
         return await _with_repo(_summary)
     if args.command == "export":
         return await _with_repo(
-            lambda repo: _export(repo, args.out, args.limit,
-                                 args.status, args.verdict)
+            lambda repo: _export(
+                repo, args.out, args.limit, args.status, args.verdict,
+                not args.no_context,
+            )
+        )
+    if args.command == "label":
+        return await _with_repo(
+            lambda repo: _label(
+                repo, args.limit, args.verdict, args.reviewer
+            )
         )
     if args.command == "import":
         return await _with_repo(

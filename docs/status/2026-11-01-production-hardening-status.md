@@ -2,14 +2,14 @@
 
 - 分支：`feat/observability-console`
 - 最新提交：Trace 视图、离线 demo、judge 人工复核（本条提交）；上一提交：`bed4c54 feat: add simulated ticket page and judge calibration`
-- 测试：**164 passed**，覆盖率 **82.0%**
+- 测试：**172 passed**，覆盖率 **76.8%**
 - 评测：`make eval` 全部通过（66 条金标/回放用例）
 - 类型检查：`make typecheck` 覆盖 application/eval/knowledge/security/tools/workers/repositories
 - 默认运行模式：`MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`
 
 ## 当前快照（2026-11-03）
 
-- 工作树：无未提交改动
+- 工作树：judge 一次性采样、50 条离线校准集与人工标注工具（待提交）
 - 当前运行的 API/worker：`MODEL_MODE=scripted`、`ADAPTER_MODE=mock`、`AUTH_MODE=mock`
 - 运行镜像：Alpine，已包含 `/tickets` 模拟工单页、Trace Flow、judge 复核 API
 - 离线 scripted 模型支持常见中文差旅表达（目的地/日期/预算/住宿区域），
@@ -46,7 +46,7 @@
 | W5 模型网关 | ✅ 100% | fallback、结构化校验/修复、成本账本、缓存、超时；P1 已补真流式、共享熔断、prompt 注册表、任务预算 | — |
 | W6 工具治理 | ✅ 100% | 输入/输出 schema、超时、required_scopes、错误分类、工具指标、guard/审批/下单/幂等回放审计 | — |
 | W7 可观测 | ✅ 100% | OTel、JSON 日志、Prometheus 指标、Postgres trace 投影、五件套、告警规则接入共享 Prometheus | SkyWalking 原生服务目录为空，已用 Zipkin API 查询 |
-| W8 测试/CI/文档 | ✅ 100% | 164 tests、82.0% 覆盖率、PG 测试库、ruff、mypy（新模块）、GitHub Actions 实际运行通过、ADR、Runbook | — |
+| W8 测试/CI/文档 | ✅ 100% | 172 tests、76.8% 覆盖率、PG 测试库、ruff、mypy（新模块）、GitHub Actions 实际运行通过、ADR、Runbook | — |
 
 ## 本轮（P0 收尾）完成项
 
@@ -173,6 +173,12 @@
 10. Agent 流转图来自 PostgreSQL `spans` 投影，不是 Tempo 原生
     Service Graph；只展示实际执行顺序。
 11. SkyWalking 原生服务目录/拓扑仍为可选验证项，Tempo/Grafana 是主视图。
+12. 本地 demo 库当前 1805 个 COMPLETED 任务来自 load-test，Checkpoint 中
+    request/options/selected 为空，在线 review 队列无法支撑 50 条校准；
+    人工校准改用 `tests/eval/judge_calibration_50.jsonl` 离线集。
+13. judge v1（DeepSeek，temperature=0）仍存在运行间不一致：同一条
+    `pass-long-summary` 两次分别判 fail/3 和 pass/5。正式校准需固定模型
+    版本并考虑重复评审/多数投票。
 
 ## 人工验收
 
@@ -201,7 +207,7 @@ cd web && npm run build
 
 - `ruff check src tests`：通过
 - `mypy`（CI 范围，含 eval/knowledge）：通过
-- `pytest`：164 passed，82.0% 覆盖率
+- `pytest`：172 passed，76.8% 覆盖率
 - `make eval`：全部 suite 通过
 - Prometheus：26 条规则已加载（16 条告警 + 10 条记录规则）
 
@@ -243,8 +249,11 @@ cd web && npm run build
 | 数据集版本化/拆分 | ✅ dataset_version、golden/regression/holdout、holdout 独立运行 |
 | 近线质量评估 | ✅ 抽样最近任务、确定性检查、quality_findings、指标/看板/API |
 | 在线 LLM-as-judge | ✅ 抽样 COMPLETED 任务、结构化评审、judge_results、指标/看板/API（live 模式启用） |
-| Judge 校准 | ✅ 24 条 seeded 数据、`make judge-calibrate`、一致率/MAE/kappa/混淆矩阵报告 |
-| Judge 人工复核 | ✅ `judge_results.review_status`、PATCH API、导出/导入 CLI；人工标签入库 |
+| Judge 校准 | ✅ 24 条 seeded 基线 + 50 条人工校准集；`make judge-calibrate` 输出一致率/MAE/kappa/混淆矩阵 |
+| Judge 人工复核 | ✅ `judge_results.review_status`、PATCH API、导出/导入 CLI、交互式 `judge-review-label`；导出带评审上下文 |
+| Judge 一次性采样 | ✅ `make judge-sample`：对最近 COMPLETED 任务一次性 live judge，不启动 worker、不依赖 Milvus |
+| Judge 50 条离线校准集 | ✅ `tests/eval/judge_calibration_50.jsonl`（pass/fail 各 25）；`judge-label-*` 三步人工标注流程 |
+| Judge 质量报告 | ✅ `make judge-report`：工具报告 + 数据集报告 + 校准 JSON 汇总；校准输出 md/json |
 | OpenJudge align-human | ✅ 独立校准脚本、TPR/TNR/kappa/AC1/bias/calibration gate（需 ≥50 标签） |
 | 在线抽样管线 | ✅ 抽样 → judge → pending 复核队列 → 人工标签 → 配对文件 → align-human |
 | 镜像 CVE 修复 | ✅ Alpine 运行镜像、移除 pip 与 SQLite 死依赖；Trivy 0 HIGH/CRITICAL（修复前 43） |
@@ -305,7 +314,11 @@ cd web && npm run build
 
 待做：
 
-1. Judge seeded 基线已跑；用人工标签复核/替换 seed，再考虑 holdout 定时跑。
+1. Judge 50 条离线校准集已生成（`data/judge_labeling.jsonl`，已跑 judge）；
+   运行 `make judge-label` 完成人工标注，再 `make judge-label-finalize`
+   （生成 `tests/eval/judge_calibration_human.jsonl`）和
+   `make judge-calibrate-human` 和 `make judge-report`；达标后再考虑 holdout
+   定时跑。
 2. 工单保持模拟页；需要真实工单时替换 `TicketPort`（Gitee/GitHub/Jira）。
 3. 控制台正式退役（已冻结，待产品后台/工单就绪）。
 4. SkyWalking 原生服务目录/拓扑（可选，Tempo/Grafana 已是主视图）。

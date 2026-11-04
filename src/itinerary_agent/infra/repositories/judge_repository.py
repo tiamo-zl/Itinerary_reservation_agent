@@ -90,3 +90,16 @@ class PostgresJudgeRepository:
             "FROM judge_results GROUP BY review_status"
         )
         return [dict(row) for row in rows]
+
+    async def report_summary(self) -> dict:
+        """工具报告用的聚合指标。"""
+        row = await self.db.fetchone(
+            "SELECT COUNT(*) AS total, "
+            "COUNT(*) FILTER (WHERE verdict = 'pass') AS pass, "
+            "COUNT(*) FILTER (WHERE verdict = 'fail') AS fail, "
+            "COUNT(*) FILTER (WHERE review_status = 'pending') AS pending, "
+            "COUNT(*) FILTER (WHERE review_status = 'reviewed') AS reviewed, "
+            "AVG(score) AS avg_score, MAX(created_at) AS latest_at "
+            "FROM judge_results"
+        )
+        return dict(row) if row else {}

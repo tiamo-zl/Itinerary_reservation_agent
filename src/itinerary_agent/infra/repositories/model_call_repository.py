@@ -9,6 +9,22 @@ class PostgresModelCallRepository:
     def __init__(self, db: Database):
         self.db = db
 
+    async def purpose_summary(self, purpose: str) -> dict:
+        """按用途聚合调用量、失败、token、成本和延迟。"""
+        row = await self.db.fetchone(
+            "SELECT COUNT(*) AS calls, "
+            "COUNT(*) FILTER (WHERE status = 'ok') AS ok, "
+            "COUNT(*) FILTER (WHERE status IS NOT NULL "
+            "                  AND status <> 'ok') AS errors, "
+            "COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS tokens, "
+            "COALESCE(SUM(cost_usd), 0) AS cost_usd, "
+            "COUNT(*) FILTER (WHERE cache_hit) AS cache_hits, "
+            "COALESCE(AVG(duration_ms), 0) AS avg_ms "
+            "FROM llm_calls WHERE purpose = ?",
+            (purpose,),
+        )
+        return dict(row) if row else {}
+
     async def task_usage(self, task_id: str) -> dict:
         """任务累计 token/成本，用于预算闸门。"""
         row = await self.db.fetchone(

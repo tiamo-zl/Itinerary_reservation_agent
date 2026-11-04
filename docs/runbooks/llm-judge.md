@@ -96,6 +96,24 @@ Grafana `Itinerary Agent Quality` 已加入：
 - LLM judge pass ratio
 - LLM judge average score
 
+## 一次性采样
+
+常驻 worker 按 `JUDGE_SAMPLE_RATE` 低频抽样。人工校准前需要一批
+确定的样本，可以用一次性命令，不启动 worker、不初始化 Milvus：
+
+```bash
+make judge-sample ARGS="--limit 50"
+make judge-sample ARGS="--task-id <task_id> --task-id <task_id>"
+make judge-sample ARGS="--limit 20 --dry-run"
+```
+
+它只读取最近 `COMPLETED` 任务的 Checkpoint，调用 live judge 并写入
+`judge_results`；重复任务按 `(task_id, prompt_version)` 跳过。
+
+如果本地库只有 load-test 任务（`request`、`selected`、`options` 为空），
+judge 会把它们判为 fail，这类样本不适合做人工校准。此时改用下面的
+离线 50 条校准集。
+
 ## 成本
 
 - 采样 1% 起步
@@ -119,18 +137,22 @@ make judge-calibrate
 - 报告：`docs/status/judge-calibration.md`
 - 需要 `MODEL_MODE=live` 和 DeepSeek Key
 
-2026-11-02 seeded 基线（judge v1，DeepSeek）：
+2026-11-03 seeded 基线（judge v1，DeepSeek）：
 
 ```text
 verdict agreement = 0.875
-score MAE         = 0.667
-weighted kappa    = 0.758
-fail recall       = 0.750
+score MAE         = 0.708
+weighted kappa    = 0.753
+fail recall       = 0.833
 ```
 
-3 条 fail 漏判：`fail-missing-destination`、`fail-empty-summary`、
-`fail-no-selection`。judge 倾向从 `options` 推断方案，忽略关键字段/
-summary/selected 为空。建议出 judge v2 时明确这三条硬规则，再重新校准。
+2 条 fail 漏判：`fail-missing-destination`、`fail-empty-summary`。
+judge 倾向从 `options` 推断方案，忽略关键字段 / summary 为空。
+建议出 judge v2 时明确硬规则，再重新校准。
+
+同一天两次运行中，`pass-long-summary` 一次判 fail/3、一次判 pass/5。
+即使 temperature=0，DeepSeek 仍可能给出不同结论；正式校准应固定
+模型版本，并对关键样本做重复评审或多数投票。
 
 报告指标：
 
@@ -164,7 +186,65 @@ uv run python -m itinerary_agent.eval.judge_calibration \
 3. 达阈值后再把 judge 作为趋势信号，仍不作为 CI 硬门禁；
 4. 每次修改 judge prompt 后重新校准。
 
-## 人工复核与 OpenJudge 校准
+## 离线 50 条人工校准
+
+在线复核队列依赖真实任务；本地 demo 库可能只有 load-test 产生的
+空任务，无法支撑 50 条校准。此时使用离线校准集：
+
+```text
+tests/eval/judge_calibration_50.jsonl   50 条，pass/fail 各 25
+  → judge-label-prepare                对每条跑一次 judge
+  → data/judge_labeling.jsonl          带上下文、不含 seed 标签
+  → judge-label                        逐条人工标注
+  → judge-label-finalize               生成 tests/eval/judge_calibration_human.jsonl
+  → judge-calibrate-human              重跑 judge 并出校准报告
+```
+
+```bash
+make judge-label-prepare   # 50 次 live judge 调用
+make judge-label           # 交互式，p/f + 0-5 分 + 备注
+make judge-label-finalize
+make judge-calibrate-human
+```
+
+标注原则：
+
+- `pass`：request/options/selected/policy/approval/summary 一致，
+  满足日期、预算、区域、舱位和审批状态；
+- `fail`：存在硬矛盾或关键遗漏，例如摘要声称已预订但 selected 为空、
+  超预算却称通过、审批 rejected 却称已确认、目的地/舱位不一致；
+- 分数 0-5：0-1 明显错误，2 关键遗漏，3 有瑕疵但可用，4 基本正确，
+  5 完全正确且信息完整；
+- 先独立判断，再看 judge reason；不要照抄 judge verdict，否则校准无意义。
+
+`prepare` 不读取数据集里的 seed 标签，避免人工标注被预置答案影响。
+至少需要 50 条且每类 ≥10 条，`judge-align` 才会给出 calibration gate。
+
+## 三类报告
+
+| 报告 | 命令 | 输出 | 回答什么 |
+|---|---|---|---|
+| 工具报告 | `make judge-report` | `docs/status/judge-report.md` 第 1 节 | judge 是否启用、在线结果/复核队列、调用量/失败/token/成本/延迟 |
+| 数据集报告 | `make judge-report` | 同上第 2 节 | 校准集规模、标签分布、来源、字段完整度、重复 ID、标签与 ID 前缀漂移 |
+| 校准报告 | `make judge-calibrate-human` | `docs/status/judge-calibration-human.md` + `.json` | 人工 vs judge 的一致率、MAE、kappa、混淆矩阵、门禁 |
+
+```bash
+make judge-report            # 工具 + 数据集 + 已有校准 JSON 汇总
+make judge-calibrate-human   # 重新调用 judge 并生成人工校准 md/json
+make judge-report            # 校准 JSON 生成后再汇总一次
+```
+
+`judge-report` 是只读聚合，不会调用模型；`judge-calibrate-human`
+会重新跑 judge，因此需要 live key。seeded 基线用 `make judge-calibrate`，
+输出 `docs/status/judge-calibration.md` 和 `.json`。
+
+报告里固定记录：
+
+- 数据集路径与 SHA-256 前缀；
+- prompt 版本、模型、标签来源；
+- 门禁参考值：`agreement ≥ 0.85`、`kappa ≥ 0.6`（不是 CI 硬门禁）。
+
+## 在线人工复核与 OpenJudge 校准
 
 judge 结果默认进入人工复核队列（`review_status=pending`）。
 

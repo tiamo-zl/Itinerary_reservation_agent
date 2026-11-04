@@ -5,7 +5,7 @@ DURATION ?= 30s
 RAMP ?= 20s
 HOLD ?= 60s
 
-.PHONY: db-up db-down db-logs migrate revision api worker idp obs-up obs-down higress-up higress-down demo-seed knowledge-ingest knowledge-reindex knowledge-check badcase-export chaos-up chaos-down load-smoke load-chat load-read load audit ci test eval eval-holdout lint typecheck web-build smoke
+.PHONY: db-up db-down db-logs migrate revision api worker idp obs-up obs-down higress-up higress-down demo-seed knowledge-ingest knowledge-reindex knowledge-check badcase-export chaos-up chaos-down load-smoke load-chat load-read load audit ci test eval eval-holdout judge-sample judge-review-label judge-label-prepare judge-label judge-label-finalize judge-calibrate-human judge-report lint typecheck web-build smoke
 
 # 只启动 P0 需要的基础设施，不构建应用镜像。
 db-up:
@@ -53,7 +53,34 @@ eval-expansion:
 		--thresholds tests/eval/expansion_50/thresholds.json
 
 judge-calibrate:
-	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_calibration
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_calibration \
+		--json-out docs/status/judge-calibration.json
+
+judge-report:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_report
+
+judge-sample:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_sample $(ARGS)
+
+judge-label-prepare:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_labeling \
+		prepare --dataset tests/eval/judge_calibration_50.jsonl \
+		--out data/judge_labeling.jsonl
+
+judge-label:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_labeling \
+		label --in data/judge_labeling.jsonl --reviewer local
+
+judge-label-finalize:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_labeling \
+		finalize --in data/judge_labeling.jsonl \
+		--out tests/eval/judge_calibration_human.jsonl
+
+judge-calibrate-human:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_calibration \
+		--dataset tests/eval/judge_calibration_human.jsonl \
+		--out docs/status/judge-calibration-human.md \
+		--json-out docs/status/judge-calibration-human.json
 
 grafana-ro:
 	./scripts/create-grafana-ro.sh
@@ -61,6 +88,10 @@ grafana-ro:
 judge-review-export:
 	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_review \
 		export --out data/judge_review.jsonl --limit 100
+
+judge-review-label:
+	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_review \
+		label --limit 50 --reviewer local
 
 judge-review-import:
 	PYTHONPATH=src uv run python -m itinerary_agent.eval.judge_review \

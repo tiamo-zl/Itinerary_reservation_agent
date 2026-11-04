@@ -10,6 +10,9 @@ from itinerary_agent.infra.repositories.approval_repository import (
     PostgresApprovalRepository,
 )
 from itinerary_agent.infra.repositories.audit_repository import PostgresAuditLog
+from itinerary_agent.infra.repositories.checkpoint_repository import (
+    PostgresCheckpointRepository,
+)
 from itinerary_agent.infra.repositories.conversation_repository import (
     PostgresConversationRepository,
 )
@@ -49,6 +52,7 @@ from itinerary_agent.infra.repositories.trace_repository import PostgresTraceRep
 __all__ = [
     "PostgresApprovalRepository",
     "PostgresAuditLog",
+    "PostgresCheckpointRepository",
     "PostgresConversationRepository",
     "PostgresFeedbackRepository",
     "PostgresIdempotencyRepository",

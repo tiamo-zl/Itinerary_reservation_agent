@@ -128,10 +128,11 @@ class LLMJudgeWorker:
                 logger.exception("LLM judge batch failed")
             await asyncio.sleep(self.interval)
 
-    async def collect_once(self) -> dict:
-        tasks = await self.task_repo.list_recent(
-            self.lookback_minutes, self.max_tasks
-        )
+    async def collect_once(self, tasks: list[dict] | None = None) -> dict:
+        if tasks is None:
+            tasks = await self.task_repo.list_recent(
+                self.lookback_minutes, self.max_tasks
+            )
         results = {"sampled": 0, "judged": 0, "pass": 0, "fail": 0}
         for task in tasks:
             if not _sampled(task["task_id"], self.sample_rate):

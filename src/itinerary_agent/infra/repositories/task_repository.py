@@ -28,6 +28,18 @@ class PostgresTaskRepository:
         )
         return [dict(row) for row in rows]
 
+    async def list_recent_completed(self, since_minutes: int,
+                                    limit: int = 100) -> list[dict]:
+        """一次性 judge 采样：最近完成的任务。"""
+        rows = await self.db.fetchall(
+            f"SELECT {_TASK_COLUMNS} FROM tasks "
+            "WHERE status = 'COMPLETED' "
+            "AND updated_at >= now() - (? * interval '1 minute') "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (since_minutes, limit),
+        )
+        return [dict(row) for row in rows]
+
     async def status_counts(self) -> list[dict]:
         """按状态聚合任务数，供业务指标投影。"""
         rows = await self.db.fetchall(

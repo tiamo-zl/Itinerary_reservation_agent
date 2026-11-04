@@ -20,6 +20,8 @@ from pathlib import Path
 
 from itinerary_agent.domain.models import CallContext, ModelTier
 from itinerary_agent.infra.config import Settings
+from itinerary_agent.infra.database import Database
+from itinerary_agent.infra.repositories import PostgresModelCallRepository
 from itinerary_agent.model_gateway.gateway import OpenAIChatGateway
 from itinerary_agent.model_gateway.prompts import default_prompt_registry
 from itinerary_agent.workers.llm_judge import JUDGE_SCHEMA, build_judge_payload
@@ -263,9 +265,14 @@ def render_markdown(cases: list[dict], results: list[dict],
             f"| {row['id']} | {human} | {judge} | {same} | "
             f"{detail.replace('|', '/')} |"
         )
+    human_only = set(labels) == {"human"}
     lines.extend([
         "",
-        "> 当前标签为 seeded 基线；正式校准前应替换为人工标注。",
+        (
+            "> 当前标签为人工标注。"
+            if human_only
+            else "> 当前标签为 seeded 基线；正式校准前应替换为人工标注。"
+        ),
         "",
     ])
     return "\n".join(lines)
@@ -280,14 +287,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--prompt-version", default="v1")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument("--json-out", type=Path, default=None,
+                        help="also write the structured report as JSON")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--fail-under-agreement", type=float, default=None)
     parser.add_argument("--fail-under-kappa", type=float, default=None)
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+async def _run(args) -> int:
     cases = load_cases(args.dataset)
     settings = Settings()
     if settings.model_mode != "live":
@@ -297,14 +305,28 @@ def main(argv: list[str] | None = None) -> int:
         print("DEEPSEEK_API_KEY is required for judge calibration",
               file=sys.stderr)
         return 2
-    model = OpenAIChatGateway(settings)
-    results = asyncio.run(evaluate_cases(
-        cases, model, prompt_version=args.prompt_version
-    ))
+    db = Database(settings.database_url)
+    await db.connect()
+    model = OpenAIChatGateway(
+        settings, ledger=PostgresModelCallRepository(db)
+    )
+    try:
+        results = await evaluate_cases(
+            cases, model, prompt_version=args.prompt_version
+        )
+    finally:
+        await model.client.close()
+        if model.fallback_client is not None:
+            await model.fallback_client.close()
+        await db.close()
+
     metrics = compute_metrics(results)
+    labels = Counter(case["label_source"] for case in cases)
     report = {
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "dataset": str(args.dataset),
         "prompt_version": args.prompt_version,
+        "label_source": dict(labels),
         "metrics": metrics,
         "results": results,
     }
@@ -314,6 +336,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(markdown + "\n", encoding="utf-8")
+    if args.json_out is not None:
+        args.json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.json_out.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
@@ -328,6 +356,10 @@ def main(argv: list[str] | None = None) -> int:
             and (metrics["kappa"] or 0) < args.fail_under_kappa):
         return 1
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    return asyncio.run(_run(_parser().parse_args(argv)))
 
 
 if __name__ == "__main__":
